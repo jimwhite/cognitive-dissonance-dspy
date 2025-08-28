@@ -59,24 +59,19 @@ class ResolutionResult:
     reasoning: str
 
 
-class ClaimClassifier(dspy.Module):
-    """Classifies claims to determine if they are mathematically verifiable."""
+class ClaimClassifier:
+    """Classifies claims to determine if they are mathematically verifiable.
+    
+    This uses the necessity analyzer as the authoritative source for mathematical
+    patterns, avoiding duplication of pattern matching logic.
+    """
     
     def __init__(self):
-        super().__init__()
+        # Import here to avoid circular dependency
+        from formal_verification.necessity_prover import MathematicalStructureAnalyzer
+        self.necessity_analyzer = MathematicalStructureAnalyzer()
         
-        # Mathematical patterns that can be formally verified
-        self.mathematical_patterns = [
-            r'\d+\s*[\+\-\*\/\%]\s*\d+\s*=\s*\d+',  # Arithmetic: 2+2=4
-            r'factorial\s*\(\s*\d+\s*\)\s*=\s*\d+',  # Factorial: factorial(5)=120
-            r'fibonacci\s*\(\s*\d+\s*\)\s*=\s*\d+',  # Fibonacci: fibonacci(7)=13
-            r'gcd\s*\(\s*\d+\s*,\s*\d+\s*\)\s*=\s*\d+',  # GCD: gcd(12,8)=4
-            r'\d+\s*[<>]=?\s*\d+',                   # Inequalities: 5 < 10
-            r'forall\s+\w+.*,.*',                    # Universal: forall n, n+0=n
-            r'exists\s+\w+.*such that.*',            # Existential: exists x such that x>10
-        ]
-        
-        # Algorithm patterns
+        # Algorithm patterns (not covered by necessity analyzer)
         self.algorithmic_patterns = [
             r'[Oo]\s*\(\s*[^)]+\s*\)',               # Complexity: O(n log n) 
             r'time complexity.*[Oo]\s*\(',           # "has time complexity O(n)"
@@ -117,11 +112,11 @@ class ClaimClassifier(dspy.Module):
         """
         claim_lower = claim_text.lower()
         
-        # Check mathematical patterns
-        for pattern in self.mathematical_patterns:
-            if re.search(pattern, claim_lower):
-                logger.debug(f"Classified as MATHEMATICAL: {pattern}")
-                return ClaimCategory.MATHEMATICAL
+        # First check if necessity analyzer can handle it (authoritative for mathematical)
+        necessity_evidence = self.necessity_analyzer.analyze_claim(claim_text)
+        if necessity_evidence is not None:
+            logger.debug(f"Classified as MATHEMATICAL via necessity analysis")
+            return ClaimCategory.MATHEMATICAL
         
         # Check algorithmic patterns  
         for pattern in self.algorithmic_patterns:
@@ -179,7 +174,8 @@ class MathematicalCognitiveDissonanceResolver(dspy.Module):
         if enable_formal_verification:
             self.formal_detector = FormalVerificationConflictDetector(
                 use_hybrid=True,  # Use Z3+Coq hybrid proving
-                enable_auto_repair=True  # Enable automatic lemma discovery
+                enable_auto_repair=True,  # Enable automatic lemma discovery
+                enable_necessity=True  # Enable necessity-based proof discovery
             )
             logger.info("Initialized with formal verification enabled")
         else:
