@@ -12,8 +12,103 @@ from .experiment import (
     run_confidence_analysis
 )
 from .verifier import BeliefAgent, DissonanceDetector, ReconciliationAgent
+from .mathematical_resolver import MathematicalCognitiveDissonanceResolver
 
 logger = logging.getLogger(__name__)
+
+
+def demo_mathematical_resolution():
+    """Demonstrate mathematical proof-backed cognitive dissonance resolution."""
+    from .config import setup_logging, ExperimentConfig
+    
+    setup_logging()
+    config = ExperimentConfig.from_env()
+    config.setup_dspy()
+    
+    # Initialize the mathematical resolver
+    resolver = MathematicalCognitiveDissonanceResolver(
+        use_cot=True, 
+        enable_formal_verification=True
+    )
+    
+    print("\n=== Mathematical Proof-Backed Cognitive Dissonance Resolution ===\n")
+    
+    # Example 1: Mathematical conflict that can be formally verified
+    text1 = "The sum of 2 plus 2 equals 4. This is basic arithmetic."
+    text2 = "Actually, 2 + 2 = 5. Mathematical addition works differently."
+    
+    print(f"Text 1: {text1}")
+    print(f"Text 2: {text2}\n")
+    
+    result = resolver(text1=text1, text2=text2)
+    
+    print(f"Conflict Detected: {result.conflict_detected}")
+    print(f"Resolution Method: {result.resolution_method}")
+    print(f"Final Confidence: {result.final_confidence:.3f}")
+    print(f"Resolved Claim: {result.resolved_claim}")
+    print(f"Reasoning: {result.reasoning}")
+    
+    if result.mathematical_evidence:
+        print("\nMathematical Evidence:")
+        for evidence in result.mathematical_evidence:
+            print(f"  • '{evidence.claim_text}' -> {'PROVEN' if evidence.proven else 'FAILED'} "
+                  f"({evidence.proof_time_ms:.1f}ms, {evidence.prover_used})")
+    
+    print("\n" + "="*70 + "\n")
+    
+    # Example 2: Algorithm correctness conflict
+    text3 = "This sorting function has O(n log n) time complexity and sorts correctly."
+    text4 = "The same algorithm has O(n^2) complexity and contains bugs."
+    
+    print(f"Text 3: {text3}")
+    print(f"Text 4: {text4}\n")
+    
+    # Include sample code for analysis
+    sample_code = """
+    def quicksort(arr):
+        if len(arr) <= 1:
+            return arr
+        pivot = arr[len(arr) // 2]
+        left = [x for x in arr if x < pivot]
+        middle = [x for x in arr if x == pivot]
+        right = [x for x in arr if x > pivot]
+        return quicksort(left) + middle + quicksort(right)
+    """
+    
+    result2 = resolver(text1=text3, text2=text4, code=sample_code)
+    
+    print(f"Conflict Detected: {result2.conflict_detected}")
+    print(f"Resolution Method: {result2.resolution_method}")  
+    print(f"Final Confidence: {result2.final_confidence:.3f}")
+    print(f"Resolved Claim: {result2.resolved_claim}")
+    print(f"Reasoning: {result2.reasoning}")
+    
+    if result2.mathematical_evidence:
+        print("\nMathematical Evidence:")
+        for evidence in result2.mathematical_evidence:
+            print(f"  • '{evidence.claim_text[:60]}...' -> {'PROVEN' if evidence.proven else 'FAILED'} "
+                  f"({evidence.proof_time_ms:.1f}ms)")
+    
+    print("\n" + "="*70 + "\n")
+    
+    # Example 3: Subjective conflict (should fall back to probabilistic)
+    text5 = "Python is the best programming language for data science."
+    text6 = "R is superior to Python for statistical analysis and data science."
+    
+    print(f"Text 5: {text5}")
+    print(f"Text 6: {text6}\n")
+    
+    result3 = resolver(text1=text5, text2=text6)
+    
+    print(f"Conflict Detected: {result3.conflict_detected}")
+    print(f"Resolution Method: {result3.resolution_method}")
+    print(f"Final Confidence: {result3.final_confidence:.3f}")
+    print(f"Resolved Claim: {result3.resolved_claim}")
+    print(f"Reasoning: {result3.reasoning}")
+    
+    print("\nDemonstration complete. The system intelligently routes verifiable claims to")
+    print("formal verification and falls back to probabilistic reconciliation for")
+    print("subjective or unverifiable claims.")
 
 
 def demo_basic_usage():
@@ -98,7 +193,7 @@ def main():
     
     parser.add_argument(
         "command",
-        choices=["demo", "experiment", "advanced", "ablation", "confidence"],
+        choices=["demo", "mathematical", "experiment", "advanced", "ablation", "confidence"],
         help="Command to run"
     )
     
@@ -183,6 +278,9 @@ def main():
     # Run selected command
     if args.command == "demo":
         demo_basic_usage()
+    
+    elif args.command == "mathematical":
+        demo_mathematical_resolution()
     
     elif args.command == "experiment":
         logger.info("Running cognitive dissonance experiment...")
