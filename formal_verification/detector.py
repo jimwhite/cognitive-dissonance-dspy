@@ -1,0 +1,221 @@
+"""Main formal verification cognitive dissonance detector."""
+
+import logging
+from typing import List, Dict, Tuple, Any
+
+from .types import Claim, FormalSpec, ProofResult
+from .translator import ClaimTranslator
+from .prover import CoqProver
+
+logger = logging.getLogger(__name__)
+
+
+class ConflictDetector:
+    """Detects conflicts between formal specifications."""
+    
+    def detect_conflicts(self, specs: List[FormalSpec]) -> List[Tuple[FormalSpec, FormalSpec]]:
+        """Find pairs of specifications that directly contradict each other.
+        
+        Args:
+            specs: List of formal specifications
+            
+        Returns:
+            List of specification pairs that conflict
+        """
+        conflicts = []
+        
+        for i in range(len(specs)):
+            for j in range(i + 1, len(specs)):
+                spec1, spec2 = specs[i], specs[j]
+                
+                if self._are_contradictory(spec1, spec2):
+                    conflicts.append((spec1, spec2))
+        
+        return conflicts
+    
+    def _are_contradictory(self, spec1: FormalSpec, spec2: FormalSpec) -> bool:
+        """Check if two specifications contradict each other.
+        
+        Args:
+            spec1: First specification
+            spec2: Second specification
+            
+        Returns:
+            True if specifications contradict, False otherwise
+        """
+        import re
+        
+        claim1 = spec1.claim.claim_text.lower()
+        claim2 = spec2.claim.claim_text.lower()
+        
+        # Memory safety conflicts
+        if ("memory safe" in claim1 and "buffer overflow" in claim2) or \
+           ("memory safe" in claim2 and "buffer overflow" in claim1):
+            return True
+        
+        # Complexity conflicts
+        complexity_pattern = r'O\((\w+)\)'
+        match1 = re.search(complexity_pattern, claim1)
+        match2 = re.search(complexity_pattern, claim2)
+        
+        if match1 and match2:
+            c1, c2 = match1.group(1), match2.group(1)
+            # Different complexity claims are potentially conflicting
+            if c1 != c2:
+                return True
+        
+        # Mathematical contradictions (e.g., "2+2=4" vs "2+2=5")
+        number_pattern = r'(\d+)\s*\+\s*(\d+)\s*=\s*(\d+)'
+        match1 = re.search(number_pattern, claim1)
+        match2 = re.search(number_pattern, claim2)
+        
+        if match1 and match2:
+            expr1 = (int(match1.group(1)), int(match1.group(2)), int(match1.group(3)))
+            expr2 = (int(match2.group(1)), int(match2.group(2)), int(match2.group(3)))
+            
+            # Same left side, different right side = conflict
+            if expr1[:2] == expr2[:2] and expr1[2] != expr2[2]:
+                return True
+        
+        return False
+
+
+class FormalVerificationConflictDetector:
+    """Main class for detecting and resolving cognitive dissonance using formal verification."""
+    
+    def __init__(self, timeout_seconds: int = 30):
+        """Initialize the formal verification conflict detector.
+        
+        Args:
+            timeout_seconds: Timeout for theorem proving attempts
+        """
+        self.translator = ClaimTranslator()
+        self.prover = CoqProver(timeout_seconds=timeout_seconds)
+        self.conflict_detector = ConflictDetector()
+        
+        logger.info("Initialized formal verification conflict detector")
+    
+    def analyze_claims(self, claims: List[Claim], code: str = "") -> Dict[str, Any]:
+        """Analyze conflicting claims about code using formal verification.
+        
+        Args:
+            claims: List of agent claims to analyze
+            code: Optional code being analyzed (for code-specific claims)
+            
+        Returns:
+            Dictionary containing analysis results
+        """
+        logger.info(f"Analyzing {len(claims)} claims")
+        
+        # Step 1: Translate claims to formal specifications
+        specifications = []
+        translation_failures = []
+        
+        for claim in claims:
+            spec = self.translator.translate(claim, code)
+            if spec:
+                specifications.append(spec)
+            else:
+                translation_failures.append(claim)
+        
+        logger.info(f"Successfully translated {len(specifications)}/{len(claims)} claims")
+        
+        # Step 2: Detect conflicts between specifications
+        conflicts = self.conflict_detector.detect_conflicts(specifications)
+        logger.info(f"Detected {len(conflicts)} specification conflicts")
+        
+        # Step 3: Attempt to prove each specification
+        proof_results = []
+        for spec in specifications:
+            logger.debug(f"Attempting proof: {spec.spec_text}")
+            result = self.prover.prove_specification(spec)
+            proof_results.append(result)
+        
+        # Step 4: Analyze results and resolve conflicts
+        resolution = self._resolve_conflicts(conflicts, proof_results)
+        
+        return {
+            'original_claims': claims,
+            'specifications': specifications,
+            'translation_failures': translation_failures,
+            'conflicts': conflicts,
+            'proof_results': proof_results,
+            'resolution': resolution,
+            'summary': self._generate_summary(proof_results, conflicts)
+        }
+    
+    def _resolve_conflicts(self, conflicts: List, proof_results: List[ProofResult]) -> Dict[str, Any]:
+        """Resolve conflicts based on formal proof results.
+        
+        Args:
+            conflicts: List of detected conflicts
+            proof_results: Results from theorem proving attempts
+            
+        Returns:
+            Dictionary containing conflict resolution information
+        """
+        resolution = {
+            'mathematically_proven': [r for r in proof_results if r.proven],
+            'mathematically_disproven': [r for r in proof_results if not r.proven and r.error_message],
+            'unresolved': [r for r in proof_results if not r.proven and not r.error_message],
+            'agent_rankings': self._rank_agents_by_correctness(proof_results),
+            'ground_truth_established': any(r.proven for r in proof_results)
+        }
+        
+        return resolution
+    
+    def _rank_agents_by_correctness(self, proof_results: List[ProofResult]) -> Dict[str, float]:
+        """Rank agents by how many of their claims were mathematically proven.
+        
+        Args:
+            proof_results: List of proof results
+            
+        Returns:
+            Dictionary mapping agent IDs to accuracy scores
+        """
+        agent_scores = {}
+        agent_counts = {}
+        
+        for result in proof_results:
+            agent_id = result.spec.claim.agent_id
+            if agent_id not in agent_scores:
+                agent_scores[agent_id] = 0
+                agent_counts[agent_id] = 0
+            
+            agent_counts[agent_id] += 1
+            if result.proven:
+                agent_scores[agent_id] += 1
+        
+        # Calculate accuracy percentages
+        rankings = {}
+        for agent_id in agent_scores:
+            if agent_counts[agent_id] > 0:
+                rankings[agent_id] = agent_scores[agent_id] / agent_counts[agent_id]
+            else:
+                rankings[agent_id] = 0.0
+        
+        return dict(sorted(rankings.items(), key=lambda x: x[1], reverse=True))
+    
+    def _generate_summary(self, proof_results: List[ProofResult], conflicts: List) -> Dict[str, Any]:
+        """Generate human-readable summary of analysis.
+        
+        Args:
+            proof_results: List of proof results
+            conflicts: List of detected conflicts
+            
+        Returns:
+            Dictionary containing summary statistics
+        """
+        proven_count = sum(1 for r in proof_results if r.proven)
+        disproven_count = sum(1 for r in proof_results if not r.proven and r.error_message)
+        avg_proof_time = sum(r.proof_time_ms for r in proof_results) / len(proof_results) if proof_results else 0
+        
+        return {
+            'total_claims': len(proof_results),
+            'mathematically_proven': proven_count,
+            'mathematically_disproven': disproven_count,
+            'conflicts_detected': len(conflicts),
+            'verification_complete': all(r.proven or r.error_message for r in proof_results),
+            'average_proof_time_ms': avg_proof_time,
+            'has_ground_truth': proven_count > 0
+        }
