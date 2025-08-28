@@ -41,3 +41,4 @@ class ProofResult:
     proof_time_ms: float
     error_message: Optional[str]
     counter_example: Optional[str]
+    proof_output: str = ""  # Stdout output from proof attempt

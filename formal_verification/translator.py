@@ -259,19 +259,39 @@ Qed.
         hypothesis = match.group(1).strip()
         conclusion = match.group(2).strip()
         
-        # Parse simple numeric patterns
+        # Parse and handle variable bindings
         hyp_coq = self._parse_expression(hypothesis)
         conc_coq = self._parse_expression(conclusion)
         
-        spec_text = f"Implication: if {hypothesis} then {conclusion}"
-        coq_code = f"""
+        # Extract variables from expressions
+        import re
+        variables = set(re.findall(r'\b[a-z]\b', hypothesis + " " + conclusion))
+        
+        if variables:
+            # Handle implications with variables
+            var_decls = ", ".join([f"{v} : nat" for v in sorted(variables)])
+            spec_text = f"Implication: forall {', '.join(sorted(variables))}, if {hypothesis} then {conclusion}"
+            coq_code = f"""
 Require Import Arith.
-Require Import Omega.
+Require Import Lia.
+
+Theorem implication_claim : forall {var_decls}, {hyp_coq} -> {conc_coq}.
+Proof.
+  intros.
+  lia.
+Qed.
+"""
+        else:
+            # Simple numeric implication
+            spec_text = f"Implication: if {hypothesis} then {conclusion}"
+            coq_code = f"""
+Require Import Arith.
+Require Import Lia.
 
 Theorem implication_claim : {hyp_coq} -> {conc_coq}.
 Proof.
   intros H.
-  omega.
+  lia.
 Qed.
 """
         
@@ -365,11 +385,11 @@ Qed.
         spec_text = f"Inequality: {left} {op} {right}"
         coq_code = f"""
 Require Import Arith.
-Require Import Omega.
+Require Import Lia.
 
 Theorem inequality_claim : {left} {op} {right}.
 Proof.
-  omega.
+  lia.
 Qed.
 """
         
@@ -465,21 +485,19 @@ Qed.
         spec_text = f"GCD: gcd({a}, {b}) = {result}"
         coq_code = f"""
 Require Import Arith.
+Require Import Nat.
 
-Fixpoint gcd_helper (fuel : nat) (a b : nat) : nat :=
-  match fuel with
-  | 0 => a
-  | S fuel' => match b with
-               | 0 => a
-               | _ => gcd_helper fuel' b (a mod b)
-               end
+Fixpoint gcd (a b : nat) {{struct a}} : nat :=
+  match a with
+  | 0 => b
+  | S a' => match b mod (S a') with
+            | 0 => S a'
+            | r => gcd r (S a')
+            end
   end.
-
-Definition gcd (a b : nat) : nat := gcd_helper (a + b) a b.
 
 Theorem gcd_claim : gcd {a} {b} = {result}.
 Proof.
-  unfold gcd.
   simpl.
   reflexivity.
 Qed.

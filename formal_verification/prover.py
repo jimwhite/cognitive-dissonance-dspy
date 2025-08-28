@@ -7,6 +7,7 @@ import logging
 from typing import Optional
 
 from .types import FormalSpec, ProofResult
+from .proof_cache import ProofCache
 
 logger = logging.getLogger(__name__)
 
@@ -14,13 +15,16 @@ logger = logging.getLogger(__name__)
 class CoqProver:
     """Interface to Coq theorem prover for formal verification."""
     
-    def __init__(self, timeout_seconds: int = 30):
+    def __init__(self, timeout_seconds: int = 30, use_cache: bool = True):
         """Initialize Coq prover interface.
         
         Args:
             timeout_seconds: Maximum time to wait for proof completion
+            use_cache: Whether to use proof caching
         """
         self.timeout_seconds = timeout_seconds
+        self.use_cache = use_cache
+        self.cache = ProofCache() if use_cache else None
         self.coq_available = self._check_coq_installation()
         
         if not self.coq_available:
@@ -44,13 +48,20 @@ class CoqProver:
         Returns:
             ProofResult with success/failure and timing information
         """
+        # Check cache first
+        if self.use_cache and self.cache:
+            cached_result = self.cache.get(spec)
+            if cached_result:
+                return cached_result
+        
         if not self.coq_available:
             return ProofResult(
                 spec=spec,
                 proven=False,
                 proof_time_ms=0,
                 error_message="Coq theorem prover not available",
-                counter_example=None
+                counter_example=None,
+                proof_output=""
             )
         
         start_time = time.time()
@@ -70,24 +81,32 @@ class CoqProver:
             
             if result.returncode == 0:
                 logger.debug(f"Proof successful for: {spec.spec_text}")
-                return ProofResult(
+                proof_result = ProofResult(
                     spec=spec,
                     proven=True,
                     proof_time_ms=proof_time,
                     error_message=None,
-                    counter_example=None
+                    counter_example=None,
+                    proof_output=result.stdout.decode('utf-8') if result.stdout else ""
                 )
             else:
                 error_msg = result.stderr.decode('utf-8') if result.stderr else "Proof failed"
                 logger.debug(f"Proof failed for: {spec.spec_text}, error: {error_msg[:100]}")
                 
-                return ProofResult(
+                proof_result = ProofResult(
                     spec=spec,
                     proven=False,
                     proof_time_ms=proof_time,
                     error_message=error_msg,
-                    counter_example=self._extract_counter_example(error_msg)
+                    counter_example=self._extract_counter_example(error_msg),
+                    proof_output=result.stdout.decode('utf-8') if result.stdout else ""
                 )
+            
+            # Cache the result
+            if self.use_cache and self.cache:
+                self.cache.put(spec, proof_result)
+            
+            return proof_result
         
         except subprocess.TimeoutExpired:
             logger.warning(f"Proof timeout for: {spec.spec_text}")
@@ -96,7 +115,8 @@ class CoqProver:
                 proven=False,
                 proof_time_ms=self.timeout_seconds * 1000,
                 error_message="Proof attempt timed out",
-                counter_example=None
+                counter_example=None,
+                proof_output=""
             )
         
         finally:
@@ -124,3 +144,9 @@ class CoqProver:
                     return line.strip()
         
         return None
+    
+    def get_cache_stats(self) -> dict:
+        """Get cache statistics."""
+        if self.cache:
+            return self.cache.get_stats()
+        return {"cache_disabled": True}
