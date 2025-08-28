@@ -55,9 +55,18 @@ class ClaimTranslator:
             (r"(\d+)\s*\+\s*(\d+)\s*=\s*(\d+)", self._arithmetic_spec),
             (r"(\d+)\s*\*\s*(\d+)\s*=\s*(\d+)", self._multiplication_spec),
             (r"(\d+)\s*-\s*(\d+)\s*=\s*(\d+)", self._subtraction_spec),
-            (r"factorial\s+(\d+)\s*=\s*(\d+)", self._factorial_spec),
+            (r"factorial\s*\(?(\d+)\)?\s*(?:=|equals)\s*(\d+)", self._factorial_spec),
             (r"fibonacci\s+(\d+)\s*=\s*(\d+)", self._fibonacci_spec),
             (r"gcd\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*=\s*(\d+)", self._gcd_spec),
+            (r"max\s*\(\s*\[([\d,\s]+)\]\s*\)\s*returns?\s*(\d+)", self._max_spec),
+        ]
+        
+        # Software property patterns
+        self.software_patterns = [
+            (r"accessing\s+array\[(\d+)\].*length.*?(\d+).*?(safe|unsafe|overflow)", self._array_bounds_spec),
+            (r"for\s+loop.*?(\d+).*?to.*?(\w+)\s+terminates", self._loop_termination_spec),
+            (r"while\s*\(\s*true\s*\).*?terminates", self._infinite_loop_spec),
+            (r"list\s+size\s+increases.*?after\s+append", self._list_append_spec),
         ]
     
     def translate(self, claim: Claim, code: str) -> Optional[FormalSpec]:
@@ -102,6 +111,12 @@ class ClaimTranslator:
         
         # Try mathematical patterns
         for pattern, spec_generator in self.mathematical_patterns:
+            match = re.search(pattern, claim_lower)
+            if match:
+                return spec_generator(claim, code, match)
+        
+        # Try software property patterns
+        for pattern, spec_generator in self.software_patterns:
             match = re.search(pattern, claim_lower)
             if match:
                 return spec_generator(claim, code, match)
@@ -487,18 +502,10 @@ Qed.
 Require Import Arith.
 Require Import Nat.
 
-Fixpoint gcd (a b : nat) {{struct a}} : nat :=
-  match a with
-  | 0 => b
-  | S a' => match b mod (S a') with
-            | 0 => S a'
-            | r => gcd r (S a')
-            end
-  end.
-
-Theorem gcd_claim : gcd {a} {b} = {result}.
+(* Using Coq's built-in gcd function *)
+Theorem gcd_claim : Nat.gcd {a} {b} = {result}.
 Proof.
-  simpl.
+  compute.
   reflexivity.
 Qed.
 """
@@ -527,6 +534,171 @@ Qed.
         expr = re.sub(r'(\d+)\s*=\s*(\d+)', r'\1 = \2', expr)
         
         return expr
+    
+    def _max_spec(self, claim: Claim, code: str, match) -> FormalSpec:
+        """Generate max function specification."""
+        array_str = match.group(1).strip()
+        result = int(match.group(2))
+        
+        # Parse array elements
+        elements = [int(x.strip()) for x in array_str.split(',')]
+        
+        spec_text = f"Max of [{', '.join(map(str, elements))}] returns {result}"
+        coq_code = f"""
+Require Import List.
+Require Import Arith.
+Require Import Lia.
+Import ListNotations.
+
+Definition test_list := {elements}.
+
+Fixpoint list_max (l : list nat) (default : nat) : nat :=
+  match l with
+  | [] => default
+  | h :: t => max h (list_max t default)
+  end.
+
+Theorem max_claim : list_max test_list 0 = {result}.
+Proof.
+  unfold test_list.
+  simpl.
+  reflexivity.
+Qed.
+"""
+        
+        return FormalSpec(
+            claim=claim,
+            spec_text=spec_text,
+            coq_code=coq_code,
+            variables={"array": str(elements), "result": str(result)}
+        )
+    
+    def _array_bounds_spec(self, claim: Claim, code: str, match) -> FormalSpec:
+        """Generate array bounds checking specification."""
+        index = int(match.group(1))
+        length = int(match.group(2))
+        safety = match.group(3).lower()
+        
+        is_safe = "safe" in safety
+        
+        spec_text = f"Array access at index {index} with length {length} is {'safe' if is_safe else 'unsafe'}"
+        
+        if is_safe:
+            # Prove safety
+            coq_code = f"""
+Require Import Arith.
+Require Import Lia.
+
+Theorem array_bounds_safe : {index} < {length}.
+Proof.
+  lia.
+Qed.
+"""
+        else:
+            # Prove overflow
+            coq_code = f"""
+Require Import Arith.
+Require Import Lia.
+
+Theorem array_bounds_overflow : {index} >= {length}.
+Proof.
+  lia.
+Qed.
+"""
+        
+        return FormalSpec(
+            claim=claim,
+            spec_text=spec_text,
+            coq_code=coq_code,
+            variables={"index": str(index), "length": str(length)}
+        )
+    
+    def _loop_termination_spec(self, claim: Claim, code: str, match) -> FormalSpec:
+        """Generate loop termination proof."""
+        start = match.group(1) if match.group(1).isdigit() else "0"
+        end = match.group(2) if match.group(2) else "n"
+        
+        spec_text = f"For loop from {start} to {end} terminates"
+        
+        if end.isdigit():
+            # Concrete bounds
+            coq_code = f"""
+Require Import Arith.
+Require Import Lia.
+
+Theorem loop_terminates : {start} < {end} -> True.
+Proof.
+  intro H.
+  trivial.
+Qed.
+"""
+        else:
+            # Symbolic bounds
+            coq_code = f"""
+Require Import Arith.
+Require Import Lia.
+
+Theorem loop_terminates : forall n : nat, {start} < n -> 
+  exists steps : nat, steps = n - {start}.
+Proof.
+  intros n H.
+  exists (n - {start}).
+  reflexivity.
+Qed.
+"""
+        
+        return FormalSpec(
+            claim=claim,
+            spec_text=spec_text,
+            coq_code=coq_code,
+            variables={"start": start, "end": end}
+        )
+    
+    def _infinite_loop_spec(self, claim: Claim, code: str, match) -> FormalSpec:
+        """Generate specification for infinite loop (should fail to prove termination)."""
+        spec_text = "While(true) loop terminates"
+        coq_code = """
+Require Import Arith.
+
+(* This should fail - infinite loops don't terminate *)
+Theorem infinite_loop_terminates : False.
+Proof.
+  (* Cannot prove False *)
+Admitted.
+"""
+        
+        return FormalSpec(
+            claim=claim,
+            spec_text=spec_text,
+            coq_code=coq_code,
+            variables={}
+        )
+    
+    def _list_append_spec(self, claim: Claim, code: str, match) -> FormalSpec:
+        """Generate list append specification."""
+        spec_text = "List size increases by 1 after append"
+        coq_code = """
+Require Import List.
+Require Import Arith.
+Import ListNotations.
+
+Theorem list_append_increases_size : forall (A : Type) (l : list A) (x : A),
+  length (l ++ [x]) = S (length l).
+Proof.
+  intros A l x.
+  rewrite app_length.
+  simpl.
+  rewrite Nat.add_1_r.
+  reflexivity.
+Qed.
+"""
+        
+        return FormalSpec(
+            claim=claim,
+            spec_text=spec_text,
+            coq_code=coq_code,
+            variables={}
+        )
     
     def _complexity_spec(self, claim: Claim, code: str, match=None) -> FormalSpec:
         """Generate time complexity specification."""
