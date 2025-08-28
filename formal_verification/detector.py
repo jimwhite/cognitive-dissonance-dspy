@@ -8,6 +8,7 @@ from .translator import ClaimTranslator
 from .prover import CoqProver
 from .lemma_discovery import AutomatedProofRepairer
 from .deep_analysis import PropertySpecificationGenerator
+from .necessity_prover import enhance_prover_with_necessity
 try:
     from .z3_prover import HybridProver
     Z3_AVAILABLE = True
@@ -90,23 +91,31 @@ class ConflictDetector:
 class FormalVerificationConflictDetector:
     """Main class for detecting and resolving cognitive dissonance using formal verification."""
     
-    def __init__(self, timeout_seconds: int = 30, use_hybrid: bool = True, enable_auto_repair: bool = True):
+    def __init__(self, timeout_seconds: int = 30, use_hybrid: bool = True, enable_auto_repair: bool = True, enable_necessity: bool = True):
         """Initialize the formal verification conflict detector.
         
         Args:
             timeout_seconds: Timeout for theorem proving attempts
             use_hybrid: Use hybrid Coq+Z3 prover if available
             enable_auto_repair: Enable automatic lemma discovery and proof repair
+            enable_necessity: Enable necessity-based proof discovery
         """
         self.translator = ClaimTranslator()
         
-        # Use hybrid prover if Z3 is available and requested
+        # Initialize base prover
         if Z3_AVAILABLE and use_hybrid:
-            self.prover = HybridProver()
+            base_prover = HybridProver()
             logger.info("Initialized with hybrid Coq+Z3 prover")
         else:
-            self.prover = CoqProver(timeout_seconds=timeout_seconds)
+            base_prover = CoqProver(timeout_seconds=timeout_seconds)
             logger.info("Initialized with Coq prover only")
+        
+        # Enhance with necessity-based proof discovery if enabled
+        if enable_necessity:
+            self.prover = enhance_prover_with_necessity(base_prover)
+            logger.info("Enhanced with necessity-based proof discovery")
+        else:
+            self.prover = base_prover
         
         self.conflict_detector = ConflictDetector()
         
@@ -165,7 +174,11 @@ class FormalVerificationConflictDetector:
         for spec in specifications:
             logger.debug(f"Attempting proof: {spec.spec_text}")
             
-            if Z3_AVAILABLE and hasattr(self.prover, 'prove_claim'):
+            # Check if we're using the necessity-enhanced prover
+            if hasattr(self.prover, 'prove_with_necessity_priority'):
+                # Using NecessityProofIntegrator
+                result = self.prover.prove_with_necessity_priority(spec.claim)
+            elif Z3_AVAILABLE and hasattr(self.prover, 'prove_claim'):
                 # Using HybridProver - convert result format
                 claim_text = spec.claim.claim_text
                 hybrid_result = self.prover.prove_claim(claim_text)
@@ -190,8 +203,13 @@ class FormalVerificationConflictDetector:
                 
                 repaired_spec = self.proof_repairer.repair_failed_proof(result, spec)
                 if repaired_spec:
-                    # Try the repaired proof
-                    if Z3_AVAILABLE and hasattr(self.prover, 'prove_claim'):
+                    # Try the repaired proof using appropriate interface
+                    if hasattr(self.prover, 'prove_with_necessity_priority'):
+                        # Using NecessityProofIntegrator
+                        repaired_result = self.prover.prove_with_necessity_priority(repaired_spec.claim)
+                        repaired_result.proof_output += " (with auto-repair)"
+                    elif Z3_AVAILABLE and hasattr(self.prover, 'prove_claim'):
+                        # Using HybridProver
                         repaired_hybrid_result = self.prover.prove_claim(repaired_spec.claim.claim_text, code=code)
                         repaired_result = ProofResult(
                             spec=repaired_spec,
@@ -202,6 +220,7 @@ class FormalVerificationConflictDetector:
                             counter_example=repaired_hybrid_result.get('counter_example', {})
                         )
                     else:
+                        # Using CoqProver  
                         repaired_result = self.prover.prove_specification(repaired_spec)
                         repaired_result.proof_output += " (with auto-repair)"
                     
