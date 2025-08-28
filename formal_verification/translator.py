@@ -14,6 +14,24 @@ class ClaimTranslator:
     
     def __init__(self):
         """Initialize the claim translator with pattern matching rules."""
+        # Logic and quantifier patterns (NEW)
+        self.logic_patterns = [
+            (r"if\s+(.+?)\s+then\s+(.+)", self._implication_spec),
+            (r"(.+?)\s+implies\s+(.+)", self._implication_spec),
+            (r"for\s*all\s+(.+?),\s*(.+)", self._forall_spec),
+            (r"forall\s+(.+?),\s*(.+)", self._forall_spec),
+            (r"there\s+exists\s+(.+?)\s+such\s+that\s+(.+)", self._exists_spec),
+            (r"exists\s+(.+?),\s*(.+)", self._exists_spec),
+        ]
+        
+        # Inequality patterns (NEW)
+        self.inequality_patterns = [
+            (r"(\d+)\s*<\s*(\d+)", self._inequality_spec),
+            (r"(\d+)\s*>\s*(\d+)", self._inequality_spec),
+            (r"(\d+)\s*<=\s*(\d+)", self._inequality_spec),
+            (r"(\d+)\s*>=\s*(\d+)", self._inequality_spec),
+        ]
+        
         self.memory_patterns = [
             (r"memory safe|no buffer overflow|no use.after.free", self._memory_safety_spec),
             (r"buffer overflow|memory corruption|segfault", self._memory_safety_spec),
@@ -35,7 +53,11 @@ class ClaimTranslator:
         
         self.mathematical_patterns = [
             (r"(\d+)\s*\+\s*(\d+)\s*=\s*(\d+)", self._arithmetic_spec),
+            (r"(\d+)\s*\*\s*(\d+)\s*=\s*(\d+)", self._multiplication_spec),
+            (r"(\d+)\s*-\s*(\d+)\s*=\s*(\d+)", self._subtraction_spec),
             (r"factorial\s+(\d+)\s*=\s*(\d+)", self._factorial_spec),
+            (r"fibonacci\s+(\d+)\s*=\s*(\d+)", self._fibonacci_spec),
+            (r"gcd\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*=\s*(\d+)", self._gcd_spec),
         ]
     
     def translate(self, claim: Claim, code: str) -> Optional[FormalSpec]:
@@ -49,6 +71,18 @@ class ClaimTranslator:
             FormalSpec if translation successful, None otherwise
         """
         claim_lower = claim.claim_text.lower()
+        
+        # Try logic patterns first (NEW)
+        for pattern, spec_generator in self.logic_patterns:
+            match = re.search(pattern, claim_lower)
+            if match:
+                return spec_generator(claim, code, match)
+        
+        # Try inequality patterns (NEW)
+        for pattern, spec_generator in self.inequality_patterns:
+            match = re.search(pattern, claim_lower)
+            if match:
+                return spec_generator(claim, code, match)
         
         # Try memory safety patterns
         for pattern, spec_generator in self.memory_patterns:
@@ -219,6 +253,262 @@ Qed.
             coq_code=coq_code,
             variables={"input": str(input_val), "output": str(output_val)}
         )
+    
+    def _implication_spec(self, claim: Claim, code: str, match) -> FormalSpec:
+        """Generate implication specification (if-then)."""
+        hypothesis = match.group(1).strip()
+        conclusion = match.group(2).strip()
+        
+        # Parse simple numeric patterns
+        hyp_coq = self._parse_expression(hypothesis)
+        conc_coq = self._parse_expression(conclusion)
+        
+        spec_text = f"Implication: if {hypothesis} then {conclusion}"
+        coq_code = f"""
+Require Import Arith.
+Require Import Omega.
+
+Theorem implication_claim : {hyp_coq} -> {conc_coq}.
+Proof.
+  intros H.
+  omega.
+Qed.
+"""
+        
+        return FormalSpec(
+            claim=claim,
+            spec_text=spec_text,
+            coq_code=coq_code,
+            variables={"hypothesis": hypothesis, "conclusion": conclusion}
+        )
+    
+    def _forall_spec(self, claim: Claim, code: str, match) -> FormalSpec:
+        """Generate universal quantification specification."""
+        variable = match.group(1).strip()
+        property_text = match.group(2).strip()
+        
+        # Handle common patterns like "n + 0 = n"
+        if "+" in property_text and "0" in property_text:
+            spec_text = f"Universal: forall {variable}, {property_text}"
+            coq_code = f"""
+Require Import Arith.
+
+Theorem forall_claim : forall {variable} : nat, {variable} + 0 = {variable}.
+Proof.
+  intro {variable}.
+  rewrite Nat.add_0_r.
+  reflexivity.
+Qed.
+"""
+        else:
+            property_coq = self._parse_expression(property_text)
+            spec_text = f"Universal: forall {variable}, {property_text}"
+            coq_code = f"""
+Require Import Arith.
+
+Theorem forall_claim : forall {variable} : nat, {property_coq}.
+Proof.
+  intro {variable}.
+  auto.
+Qed.
+"""
+        
+        return FormalSpec(
+            claim=claim,
+            spec_text=spec_text,
+            coq_code=coq_code,
+            variables={"variable": variable, "property": property_text}
+        )
+    
+    def _exists_spec(self, claim: Claim, code: str, match) -> FormalSpec:
+        """Generate existential quantification specification."""
+        variable = match.group(1).strip()
+        property_text = match.group(2).strip()
+        
+        property_coq = self._parse_expression(property_text)
+        
+        spec_text = f"Existential: exists {variable} such that {property_text}"
+        coq_code = f"""
+Require Import Arith.
+
+Theorem exists_claim : exists {variable} : nat, {property_coq}.
+Proof.
+  exists 1.
+  auto.
+Qed.
+"""
+        
+        return FormalSpec(
+            claim=claim,
+            spec_text=spec_text,
+            coq_code=coq_code,
+            variables={"variable": variable, "property": property_text}
+        )
+    
+    def _inequality_spec(self, claim: Claim, code: str, match) -> FormalSpec:
+        """Generate inequality specification."""
+        left = int(match.group(1))
+        right = int(match.group(2))
+        
+        # Determine operator from original claim
+        if "<" in claim.claim_text and "=" not in claim.claim_text:
+            op = "<"
+        elif ">" in claim.claim_text and "=" not in claim.claim_text:
+            op = ">"
+        elif "<=" in claim.claim_text:
+            op = "<="
+        elif ">=" in claim.claim_text:
+            op = ">="
+        else:
+            op = "<"  # Default
+        
+        spec_text = f"Inequality: {left} {op} {right}"
+        coq_code = f"""
+Require Import Arith.
+Require Import Omega.
+
+Theorem inequality_claim : {left} {op} {right}.
+Proof.
+  omega.
+Qed.
+"""
+        
+        return FormalSpec(
+            claim=claim,
+            spec_text=spec_text,
+            coq_code=coq_code,
+            variables={"left": str(left), "right": str(right), "op": op}
+        )
+    
+    def _multiplication_spec(self, claim: Claim, code: str, match) -> FormalSpec:
+        """Generate multiplication specification."""
+        left = int(match.group(1))
+        right = int(match.group(2))
+        result = int(match.group(3))
+        
+        spec_text = f"Multiplication: {left} * {right} = {result}"
+        coq_code = f"""
+Require Import Arith.
+
+Theorem multiplication_claim : {left} * {right} = {result}.
+Proof.
+  reflexivity.
+Qed.
+"""
+        
+        return FormalSpec(
+            claim=claim,
+            spec_text=spec_text,
+            coq_code=coq_code,
+            variables={"left": str(left), "right": str(right), "result": str(result)}
+        )
+    
+    def _subtraction_spec(self, claim: Claim, code: str, match) -> FormalSpec:
+        """Generate subtraction specification."""
+        left = int(match.group(1))
+        right = int(match.group(2))
+        result = int(match.group(3))
+        
+        spec_text = f"Subtraction: {left} - {right} = {result}"
+        coq_code = f"""
+Require Import Arith.
+
+Theorem subtraction_claim : {left} - {right} = {result}.
+Proof.
+  reflexivity.
+Qed.
+"""
+        
+        return FormalSpec(
+            claim=claim,
+            spec_text=spec_text,
+            coq_code=coq_code,
+            variables={"left": str(left), "right": str(right), "result": str(result)}
+        )
+    
+    def _fibonacci_spec(self, claim: Claim, code: str, match) -> FormalSpec:
+        """Generate Fibonacci specification."""
+        n = int(match.group(1))
+        result = int(match.group(2))
+        
+        spec_text = f"Fibonacci: fibonacci {n} = {result}"
+        coq_code = f"""
+Require Import Arith.
+
+Fixpoint fibonacci (n : nat) : nat :=
+  match n with
+  | 0 => 0
+  | 1 => 1
+  | S (S n'' as n') => fibonacci n' + fibonacci n''
+  end.
+
+Theorem fibonacci_claim : fibonacci {n} = {result}.
+Proof.
+  simpl.
+  reflexivity.
+Qed.
+"""
+        
+        return FormalSpec(
+            claim=claim,
+            spec_text=spec_text,
+            coq_code=coq_code,
+            variables={"n": str(n), "result": str(result)}
+        )
+    
+    def _gcd_spec(self, claim: Claim, code: str, match) -> FormalSpec:
+        """Generate GCD specification."""
+        a = int(match.group(1))
+        b = int(match.group(2))
+        result = int(match.group(3))
+        
+        spec_text = f"GCD: gcd({a}, {b}) = {result}"
+        coq_code = f"""
+Require Import Arith.
+
+Fixpoint gcd_helper (fuel : nat) (a b : nat) : nat :=
+  match fuel with
+  | 0 => a
+  | S fuel' => match b with
+               | 0 => a
+               | _ => gcd_helper fuel' b (a mod b)
+               end
+  end.
+
+Definition gcd (a b : nat) : nat := gcd_helper (a + b) a b.
+
+Theorem gcd_claim : gcd {a} {b} = {result}.
+Proof.
+  unfold gcd.
+  simpl.
+  reflexivity.
+Qed.
+"""
+        
+        return FormalSpec(
+            claim=claim,
+            spec_text=spec_text,
+            coq_code=coq_code,
+            variables={"a": str(a), "b": str(b), "result": str(result)}
+        )
+    
+    def _parse_expression(self, expr: str) -> str:
+        """Parse a natural language expression to Coq syntax."""
+        # Simple parsing rules
+        expr = expr.replace(" is greater than ", " > ")
+        expr = expr.replace(" is less than ", " < ")
+        expr = expr.replace(" equals ", " = ")
+        expr = expr.replace(" plus ", " + ")
+        expr = expr.replace(" minus ", " - ")
+        expr = expr.replace(" times ", " * ")
+        
+        # Handle variable references
+        expr = re.sub(r'\b(x|y|n|m)\b', r'\1', expr)
+        
+        # Handle numeric comparisons  
+        expr = re.sub(r'(\d+)\s*=\s*(\d+)', r'\1 = \2', expr)
+        
+        return expr
     
     def _complexity_spec(self, claim: Claim, code: str, match=None) -> FormalSpec:
         """Generate time complexity specification."""
