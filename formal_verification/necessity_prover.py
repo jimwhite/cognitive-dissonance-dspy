@@ -90,6 +90,9 @@ class MathematicalStructureAnalyzer:
             r'(\d+)\s*\+\s*(\d+)\s*=\s*(\d+)': self._arithmetic_necessity,
             r'(\d+)\s*\*\s*(\d+)\s*=\s*(\d+)': self._arithmetic_necessity,
             r'(\d+)\s*-\s*(\d+)\s*=\s*(\d+)': self._arithmetic_necessity,
+            
+            # Inequality evaluation  
+            r'(\d+)\s*(<|>|<=|>=)\s*(\d+)': self._inequality_necessity,
         }
         
         self.inductive_patterns = {
@@ -97,6 +100,8 @@ class MathematicalStructureAnalyzer:
             r'factorial\s*\(\s*(\d+)\s*\)\s*=\s*(\d+)': self._factorial_necessity,
             # Fibonacci sequence  
             r'fibonacci\s*\(\s*(\d+)\s*\)\s*=\s*(\d+)': self._fibonacci_necessity,
+            # GCD computation
+            r'gcd\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*=\s*(\d+)': self._gcd_necessity,
             # Summation patterns
             r'sum\s*\(\s*1\s*to\s*(\d+)\s*\)\s*=\s*(\d+)': self._summation_necessity,
         }
@@ -140,6 +145,46 @@ class MathematicalStructureAnalyzer:
                 0.0,
                 {"natural_number_arithmetic"},
                 f"Counter-example: {a} {op_symbol} {b} = {expected} ≠ {result}."
+            )
+    
+    def _inequality_necessity(self, match: re.Match, claim_text: str) -> NecessityEvidence:
+        """Analyze necessity for inequality comparisons."""
+        a, op, b = int(match.group(1)), match.group(2), int(match.group(3))
+        
+        # Evaluate the inequality
+        if op == '<':
+            is_true = a < b
+            op_name = "less than"
+        elif op == '>':
+            is_true = a > b  
+            op_name = "greater than"
+        elif op == '<=':
+            is_true = a <= b
+            op_name = "less than or equal to"
+        elif op == '>=':
+            is_true = a >= b
+            op_name = "greater than or equal to"
+        else:
+            is_true = False
+            op_name = "unknown comparison"
+        
+        if is_true:
+            return NecessityEvidence(
+                NecessityType.DEDUCTIVE,
+                [f"Inequality evaluation: {a} is {op_name} {b}"],
+                [f"By the ordering of natural numbers"],
+                1.0,
+                {"natural_number_ordering"},
+                f"Theorem: {a} {op} {b}. Proof: By comparison of natural numbers."
+            )
+        else:
+            return NecessityEvidence(
+                NecessityType.DEDUCTIVE,
+                [f"Inequality error: {a} is not {op_name} {b}"],
+                [f"The claim contradicts natural number ordering"],
+                0.0,
+                {"natural_number_ordering"},
+                f"Counter-example: {a} {op} {b} is false."
             )
     
     def _factorial_necessity(self, match: re.Match) -> NecessityEvidence:
@@ -208,6 +253,40 @@ class MathematicalStructureAnalyzer:
                 0.0,
                 {"fibonacci_definition"},
                 f"Counter-example: fibonacci({n}) = {actual_result} ≠ {claimed_result}."
+            )
+    
+    def _gcd_necessity(self, match: re.Match) -> NecessityEvidence:
+        """Analyze necessity for GCD (Greatest Common Divisor) computations."""
+        a, b, claimed_result = int(match.group(1)), int(match.group(2)), int(match.group(3))
+        
+        # Compute actual GCD using Euclidean algorithm
+        def gcd(x, y):
+            while y:
+                x, y = y, x % y
+            return x
+        
+        actual_result = gcd(a, b)
+        
+        if actual_result == claimed_result:
+            return NecessityEvidence(
+                NecessityType.DEDUCTIVE,
+                [f"GCD definition: gcd(a,b) is the largest positive integer that divides both a and b"],
+                [
+                    f"By the Euclidean algorithm",
+                    f"gcd({a}, {b}) = {actual_result}"
+                ],
+                1.0,  
+                {"euclidean_algorithm", "number_theory"},
+                f"Theorem: gcd({a}, {b}) = {actual_result}. Proof: By Euclidean algorithm."
+            )
+        else:
+            return NecessityEvidence(
+                NecessityType.DEDUCTIVE,
+                [f"GCD error: gcd({a}, {b}) = {actual_result} ≠ {claimed_result}"],
+                [f"The claim contradicts the Euclidean algorithm for GCD"],
+                0.0,
+                {"euclidean_algorithm"},
+                f"Counter-example: gcd({a}, {b}) = {actual_result} ≠ {claimed_result}."
             )
     
     def _summation_necessity(self, match: re.Match) -> NecessityEvidence:
