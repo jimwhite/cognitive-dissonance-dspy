@@ -446,55 +446,108 @@ class Z3Prover:
 
 class HybridProver:
     """
-    Hybrid prover that uses both Coq and Z3.
+    Intelligent hybrid prover with learning capabilities.
     
-    This intelligently chooses the best prover for each claim:
-    - Z3 for constraint solving, satisfiability, counter-examples
-    - Coq for inductive proofs, complex theorems, program verification
+    This uses machine learning to choose the optimal prover and strategy:
+    - Deep analysis of claim structure and complexity
+    - Historical success pattern matching
+    - Adaptive strategy learning from proof attempts
     """
     
     def __init__(self):
-        """Initialize hybrid prover."""
+        """Initialize hybrid prover with learning system."""
         from .prover import CoqProver
+        from .proof_learning import ProofStrategyLearner
         
         self.coq_prover = CoqProver()
         self.z3_prover = Z3Prover() if Z3_AVAILABLE else None
+        self.learner = ProofStrategyLearner()
         
-        # Track success rates for adaptive selection
+        # Legacy stats for backward compatibility
         self.success_stats = {
             'coq': {'attempts': 0, 'successes': 0},
             'z3': {'attempts': 0, 'successes': 0}
         }
     
-    def prove_claim(self, claim_text: str, preferred_prover: Optional[str] = None) -> Dict[str, Any]:
+    def prove_claim(self, claim_text: str, preferred_prover: Optional[str] = None, code: str = "") -> Dict[str, Any]:
         """
-        Prove a claim using the best prover.
+        Prove a claim using intelligent prover selection.
         
         Args:
             claim_text: Claim to prove
             preferred_prover: Optional preferred prover ('coq' or 'z3')
+            code: Optional code context for analysis
             
         Returns:
-            Proof result
+            Proof result with learning metadata
         """
-        # Determine which prover to use
-        if preferred_prover:
-            prover_choice = preferred_prover
+        from .types import Claim, PropertyType
+        
+        # Create claim object for analysis
+        claim = Claim(
+            agent_id="hybrid_prover",
+            claim_text=claim_text,
+            property_type=PropertyType.CORRECTNESS,
+            confidence=0.9,
+            timestamp=time.time()
+        )
+        
+        # Get learning-based strategy recommendation
+        if not preferred_prover:
+            strategy = self.learner.predict_optimal_strategy(claim, code)
+            prover_choice = strategy['recommended_prover']
+            logger.info(f"Learning system recommends {prover_choice} for '{claim_text[:30]}...' "
+                       f"(confidence: {strategy['confidence']:.1%}, reasoning: {strategy['reasoning']})")
         else:
-            prover_choice = self._choose_prover(claim_text)
+            prover_choice = preferred_prover
+            strategy = {'confidence': 0.8, 'reasoning': 'User specified', 'suggested_tactics': []}
         
         # Attempt proof with chosen prover
+        start_time = time.time()
         if prover_choice == "z3" and self.z3_prover:
             result = self._prove_with_z3(claim_text)
         else:
             result = self._prove_with_coq(claim_text)
         
-        # If first attempt fails, try the other prover
-        if not result['proven'] and not preferred_prover:
-            if prover_choice == "z3":
-                result = self._prove_with_coq(claim_text)
-            elif self.z3_prover:
-                result = self._prove_with_z3(claim_text)
+        # Record attempt for learning
+        from .types import ProofResult
+        learning_result = ProofResult(
+            spec=None,  # Not needed for learning
+            proven=result['proven'],
+            proof_time_ms=result['time_ms'],
+            error_message=result.get('error', ''),
+            proof_output=f"Prover: {result['prover']}",
+            counter_example=result.get('counter_example', {})
+        )
+        
+        self.learner.record_proof_attempt(claim, result['prover'], learning_result, code)
+        
+        # If first attempt fails and we have flexibility, try the other prover
+        if not result['proven'] and not preferred_prover and self.z3_prover:
+            logger.info(f"First attempt with {prover_choice} failed, trying alternative prover")
+            
+            alternative_prover = "coq" if prover_choice == "z3" else "z3"
+            alternative_result = self._prove_with_z3(claim_text) if alternative_prover == "z3" else self._prove_with_coq(claim_text)
+            
+            # Record alternative attempt
+            alt_learning_result = ProofResult(
+                spec=None,
+                proven=alternative_result['proven'],
+                proof_time_ms=alternative_result['time_ms'], 
+                error_message=alternative_result.get('error', ''),
+                proof_output=f"Prover: {alternative_result['prover']}",
+                counter_example=alternative_result.get('counter_example', {})
+            )
+            
+            self.learner.record_proof_attempt(claim, alternative_result['prover'], alt_learning_result, code)
+            
+            # Use alternative result if it succeeded
+            if alternative_result['proven']:
+                result = alternative_result
+        
+        # Add learning metadata to result
+        result['learning_strategy'] = strategy
+        result['total_proof_time'] = (time.time() - start_time) * 1000
         
         return result
     
