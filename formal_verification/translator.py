@@ -38,9 +38,9 @@ class ClaimTranslator:
         ]
         
         self.complexity_patterns = [
-            (r"O\((\w+)\)|time complexity.*O\((\w+)\)", self._complexity_spec),
-            (r"linear time|O\(n\)", self._complexity_spec),
-            (r"constant time|O\(1\)", self._complexity_spec),
+            (r"[Oo]\(([^)]+)\)|time complexity.*[Oo]\(([^)]+)\)", self._complexity_spec),
+            (r"linear time|[Oo]\(n\)", self._complexity_spec),
+            (r"constant time|[Oo]\(1\)", self._complexity_spec),
         ]
         
         self.correctness_patterns = [
@@ -704,7 +704,9 @@ Qed.
         """Generate time complexity specification."""
         complexity = "n"  # Default
         if match:
-            complexity = match.group(1) or match.group(2) or "n"
+            # Extract the non-None group from the regex match
+            groups = [g for g in match.groups() if g is not None]
+            complexity = groups[0] if groups else "n"
         
         func_name = self._extract_function_name(code)
         

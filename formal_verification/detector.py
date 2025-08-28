@@ -6,6 +6,11 @@ from typing import List, Dict, Tuple, Any
 from .types import Claim, FormalSpec, ProofResult
 from .translator import ClaimTranslator
 from .prover import CoqProver
+try:
+    from .z3_prover import HybridProver
+    Z3_AVAILABLE = True
+except ImportError:
+    Z3_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -83,17 +88,24 @@ class ConflictDetector:
 class FormalVerificationConflictDetector:
     """Main class for detecting and resolving cognitive dissonance using formal verification."""
     
-    def __init__(self, timeout_seconds: int = 30):
+    def __init__(self, timeout_seconds: int = 30, use_hybrid: bool = True):
         """Initialize the formal verification conflict detector.
         
         Args:
             timeout_seconds: Timeout for theorem proving attempts
+            use_hybrid: Use hybrid Coq+Z3 prover if available
         """
         self.translator = ClaimTranslator()
-        self.prover = CoqProver(timeout_seconds=timeout_seconds)
-        self.conflict_detector = ConflictDetector()
         
-        logger.info("Initialized formal verification conflict detector")
+        # Use hybrid prover if Z3 is available and requested
+        if Z3_AVAILABLE and use_hybrid:
+            self.prover = HybridProver()
+            logger.info("Initialized with hybrid Coq+Z3 prover")
+        else:
+            self.prover = CoqProver(timeout_seconds=timeout_seconds)
+            logger.info("Initialized with Coq prover only")
+        
+        self.conflict_detector = ConflictDetector()
     
     def analyze_claims(self, claims: List[Claim], code: str = "") -> Dict[str, Any]:
         """Analyze conflicting claims about code using formal verification.
@@ -107,16 +119,27 @@ class FormalVerificationConflictDetector:
         """
         logger.info(f"Analyzing {len(claims)} claims")
         
-        # Step 1: Translate claims to formal specifications
+        # Step 1: Translate claims to formal specifications  
         specifications = []
         translation_failures = []
         
         for claim in claims:
-            spec = self.translator.translate(claim, code)
-            if spec:
+            if Z3_AVAILABLE and hasattr(self.prover, 'prove_claim'):
+                # Using HybridProver - create minimal spec, let prover handle translation
+                spec = FormalSpec(
+                    claim=claim,
+                    spec_text=f"Hybrid proving: {claim.claim_text}",
+                    coq_code="",  # Will be handled by hybrid prover
+                    variables={}
+                )
                 specifications.append(spec)
             else:
-                translation_failures.append(claim)
+                # Using CoqProver - need Coq translation
+                spec = self.translator.translate(claim, code)
+                if spec:
+                    specifications.append(spec)
+                else:
+                    translation_failures.append(claim)
         
         logger.info(f"Successfully translated {len(specifications)}/{len(claims)} claims")
         
@@ -128,7 +151,26 @@ class FormalVerificationConflictDetector:
         proof_results = []
         for spec in specifications:
             logger.debug(f"Attempting proof: {spec.spec_text}")
-            result = self.prover.prove_specification(spec)
+            
+            if Z3_AVAILABLE and hasattr(self.prover, 'prove_claim'):
+                # Using HybridProver - convert result format
+                claim_text = spec.claim.claim_text
+                hybrid_result = self.prover.prove_claim(claim_text)
+                
+                # Convert hybrid result to ProofResult format
+                from .types import ProofResult
+                result = ProofResult(
+                    spec=spec,
+                    proven=hybrid_result.get('proven', False),
+                    proof_time_ms=hybrid_result.get('time_ms', 0),
+                    error_message=hybrid_result.get('error', ''),
+                    proof_output=f"Prover: {hybrid_result.get('prover', 'unknown')}",
+                    counter_example=hybrid_result.get('counter_example', {})
+                )
+            else:
+                # Using CoqProver
+                result = self.prover.prove_specification(spec)
+            
             proof_results.append(result)
         
         # Step 4: Analyze results and resolve conflicts

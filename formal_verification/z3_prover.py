@@ -545,7 +545,7 @@ class HybridProver:
         spec = translator.translate(claim, "")
         
         if not spec:
-            return {'proven': False, 'prover': 'coq', 'error': 'Translation failed'}
+            return {'proven': False, 'prover': 'coq', 'error': 'Coq translation failed'}
         
         result = self.coq_prover.prove_specification(spec)
         
