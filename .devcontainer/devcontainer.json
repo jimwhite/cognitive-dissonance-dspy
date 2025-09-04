@@ -1,6 +1,10 @@
 {
-    "name": "ACL2-Jupyter",
-    "image": "acl2-jupyter:latest",
+    "name": "cognitively-guided-reasoning",
+    // "build": {
+    //     "dockerfile": "../Dockerfile",
+    //     "context": ".."
+    // },
+    "image": "cognitively-guided-reasoning:latest",
     "forwardPorts": [
         8899
     ],
@@ -12,6 +16,9 @@
     },
     "containerEnv": {
         "JUPYTER_PORT": "8899",
-        "RESTARTABLE": "yes"
+        "RESTARTABLE": "yes",
+        // "OLLAMA_API_BASE": "http://host.docker.internal:1234/v1",
+        "OLLAMA_API_BASE": "http://localhost:1234/v1",
+        "WIKI1K_URL": "http://20.102.90.50:2017/wiki1k"
     }
 }
