@@ -65,3 +65,6 @@ coverage.xml
 *.tmp
 *.temp
 .cache/
+
+.proof_cache/
+proof_learning_data.json
