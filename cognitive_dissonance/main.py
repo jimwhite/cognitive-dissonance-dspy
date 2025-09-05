@@ -17,12 +17,8 @@ from .mathematical_resolver import MathematicalCognitiveDissonanceResolver
 logger = logging.getLogger(__name__)
 
 
-def demo_mathematical_resolution():
+def demo_mathematical_resolution(config: ExperimentConfig):
     """Demonstrate mathematical proof-backed cognitive dissonance resolution."""
-    from .config import setup_logging, ExperimentConfig
-    
-    setup_logging()
-    config = ExperimentConfig.from_env()
     config.setup_dspy()
     
     # Initialize the mathematical resolver
@@ -111,12 +107,8 @@ def demo_mathematical_resolution():
     print("subjective or unverifiable claims.")
 
 
-def demo_basic_usage():
+def demo_basic_usage(config: ExperimentConfig):
     """Demonstrate basic usage of the cognitive dissonance system."""
-    from .config import setup_logging, ExperimentConfig
-    
-    setup_logging()
-    config = ExperimentConfig.from_env()
     config.setup_dspy()
     
     # Initialize agents
@@ -239,6 +231,13 @@ def main():
     )
     
     parser.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        help="API key (use 'dummy' for LMStudio)"
+    )
+    
+    parser.add_argument(
         "--dissonance-threshold",
         type=float,
         default=None,
@@ -266,6 +265,8 @@ def main():
         config.model = args.model
     if args.api_base:
         config.api_base = args.api_base
+    if args.api_key:
+        config.api_key = args.api_key
     if args.rounds:
         config.rounds = args.rounds
     if args.alpha is not None:
@@ -277,10 +278,10 @@ def main():
     
     # Run selected command
     if args.command == "demo":
-        demo_basic_usage()
+        demo_basic_usage(config)
     
     elif args.command == "mathematical":
-        demo_mathematical_resolution()
+        demo_mathematical_resolution(config)
     
     elif args.command == "experiment":
         logger.info("Running cognitive dissonance experiment...")
