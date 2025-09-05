@@ -1,7 +1,10 @@
 """Main experiment implementation for Cognitive Dissonance resolution."""
 
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Tuple, Any, Optional
 import logging
+import os
+import pickle
+from datetime import datetime
 from dspy.teleprompt import MIPROv2, BootstrapFewShot
 
 from .config import ExperimentConfig
@@ -19,6 +22,24 @@ from .optimization import create_advanced_optimizer, GEPAOptimizer, EnsembleOpti
 from .uncertainty import UncertaintyQuantifier, EnhancedConfidenceScorer
 
 logger = logging.getLogger(__name__)
+
+
+def find_latest_checkpoint(checkpoint_dir: str) -> Optional[str]:
+    """Find checkpoint with most recent modification time."""
+    if not os.path.exists(checkpoint_dir):
+        return None
+    
+    checkpoint_files = [f for f in os.listdir(checkpoint_dir) 
+                       if f.endswith('.pkl')]
+    if not checkpoint_files:
+        return None
+    
+    # Sort by modification time, most recent first
+    checkpoint_files.sort(
+        key=lambda f: os.path.getmtime(os.path.join(checkpoint_dir, f)), 
+        reverse=True
+    )
+    return os.path.join(checkpoint_dir, checkpoint_files[0])
 
 
 class ExperimentResults:
@@ -94,6 +115,34 @@ class ExperimentResults:
             "error_analysis": self.error_analysis,
         }
 
+    def save_checkpoint(self, checkpoint_dir: str) -> str:
+        """Save experiment checkpoint to disk."""
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        
+        # Create filename with timestamp
+        experiment_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        checkpoint_file = f"experiment_{experiment_id}_round_{len(self.rounds)}.pkl"
+        checkpoint_path = os.path.join(checkpoint_dir, checkpoint_file)
+        
+        # Save the complete experiment state
+        with open(checkpoint_path, 'wb') as f:
+            pickle.dump(self, f)
+        
+        logger.info(f"Checkpoint saved to {checkpoint_path}")
+        return checkpoint_path
+
+    @staticmethod
+    def load_checkpoint(checkpoint_path: str) -> 'ExperimentResults':
+        """Load experiment from checkpoint file."""
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
+        
+        with open(checkpoint_path, 'rb') as f:
+            results = pickle.load(f)
+        
+        logger.info(f"Loaded checkpoint from {checkpoint_path}, resuming from round {len(results.rounds)}")
+        return results
+
 
 def cognitive_dissonance_experiment(
     config: ExperimentConfig = None,
@@ -144,25 +193,45 @@ def cognitive_dissonance_experiment(
         f"Loaded {len(dev_labeled)} labeled examples, {len(train_unlabeled)} unlabeled"
     )
 
-    # Initialize agents
-    agent_a = CognitiveDissonanceResolver(use_cot=config.use_cot)
-    agent_b = CognitiveDissonanceResolver(use_cot=config.use_cot)
+    # Check for checkpoint resume
+    start_round = 1
+    skip_baseline = False
+    
+    if config.checkpoints:
+        latest_checkpoint = find_latest_checkpoint(config.checkpoints)
+        if latest_checkpoint:
+            logger.info(f"Resuming from checkpoint: {latest_checkpoint}")
+            results = ExperimentResults.load_checkpoint(latest_checkpoint)
+            start_round = len(results.rounds) + 1
+            agent_a, agent_b = results.agent_a, results.agent_b
+            skip_baseline = True
+        else:
+            logger.info(f"No existing checkpoint found in {config.checkpoints}, starting fresh")
+            results = ExperimentResults()
+    else:
+        results = ExperimentResults()
 
-    results = ExperimentResults()
+    # Initialize agents if not resuming
+    if not skip_baseline:
+        agent_a = CognitiveDissonanceResolver(use_cot=config.use_cot)
+        agent_b = CognitiveDissonanceResolver(use_cot=config.use_cot)
 
     try:
-        # Baseline: truth-optimized agent A
-        logger.info("Training baseline agent A on ground truth...")
-        optimizer_a = MIPROv2(metric=combined_metric, auto=config.auto_mode)
-        agent_a = optimizer_a.compile(agent_a, trainset=dev_labeled)
+        if not skip_baseline:
+            # Baseline: truth-optimized agent A
+            logger.info("Training baseline agent A on ground truth...")
+            optimizer_a = MIPROv2(metric=combined_metric, auto=config.auto_mode)
+            agent_a = optimizer_a.compile(agent_a, trainset=dev_labeled)
 
-        # Initialize agent B with same baseline training
-        logger.info("Training baseline agent B on ground truth...")
-        optimizer_b = MIPROv2(metric=combined_metric, auto=config.auto_mode)
-        agent_b = optimizer_b.compile(agent_b, trainset=dev_labeled)
+            # Initialize agent B with same baseline training
+            logger.info("Training baseline agent B on ground truth...")
+            optimizer_b = MIPROv2(metric=combined_metric, auto=config.auto_mode)
+            agent_b = optimizer_b.compile(agent_b, trainset=dev_labeled)
+        else:
+            logger.info(f"Resuming from round {start_round}")
 
         # Iterative co-training
-        for round_num in range(1, config.rounds + 1):
+        for round_num in range(start_round, config.rounds + 1):
             logger.info(f"Starting round {round_num}/{config.rounds}")
 
             # Choose metric based on alpha value
@@ -202,6 +271,14 @@ def cognitive_dissonance_experiment(
 
             # Store results
             results.add_round(round_num, acc_a, acc_b, agree_dev, agree_train, recon_quality)
+
+            # Update agents in results for checkpointing
+            results.agent_a = agent_a
+            results.agent_b = agent_b
+
+            # Save checkpoint if enabled
+            if config.checkpoints:
+                results.save_checkpoint(config.checkpoints)
 
             # Log progress
             logger.info(
@@ -285,36 +362,56 @@ def advanced_cognitive_dissonance_experiment(
         f"Loaded {len(dev_labeled)} labeled examples, {len(train_unlabeled)} unlabeled"
     )
 
-    # Initialize agents with advanced features
-    agent_a = CognitiveDissonanceResolver(use_cot=config.use_cot)
-    agent_b = CognitiveDissonanceResolver(use_cot=config.use_cot)
+    # Check for checkpoint resume
+    start_round = 1
+    skip_baseline = False
+    
+    if config.checkpoints:
+        latest_checkpoint = find_latest_checkpoint(config.checkpoints)
+        if latest_checkpoint:
+            logger.info(f"Resuming from checkpoint: {latest_checkpoint}")
+            results = ExperimentResults.load_checkpoint(latest_checkpoint)
+            start_round = len(results.rounds) + 1
+            agent_a, agent_b = results.agent_a, results.agent_b
+            skip_baseline = True
+        else:
+            logger.info(f"No existing checkpoint found in {config.checkpoints}, starting fresh")
+            results = ExperimentResults()
+    else:
+        results = ExperimentResults()
+
+    # Initialize agents and components if not resuming
+    if not skip_baseline:
+        agent_a = CognitiveDissonanceResolver(use_cot=config.use_cot)
+        agent_b = CognitiveDissonanceResolver(use_cot=config.use_cot)
 
     # Initialize advanced components
     uncertainty_quantifier = UncertaintyQuantifier()
     confidence_scorer = EnhancedConfidenceScorer(uncertainty_quantifier)
 
-    results = ExperimentResults()
-
     try:
-        # Advanced baseline optimization
-        logger.info("Training baseline agents with advanced optimization...")
-        
-        # Create advanced optimizers
-        optimizer_a = create_advanced_optimizer(optimization_strategy)
-        optimizer_b = create_advanced_optimizer(optimization_strategy)
+        if not skip_baseline:
+            # Advanced baseline optimization
+            logger.info("Training baseline agents with advanced optimization...")
+            
+            # Create advanced optimizers
+            optimizer_a = create_advanced_optimizer(optimization_strategy)
+            optimizer_b = create_advanced_optimizer(optimization_strategy)
 
-        # Train baseline agents
-        agent_a = optimizer_a.compile(agent_a, trainset=dev_labeled)
-        agent_b = optimizer_b.compile(agent_b, trainset=dev_labeled)
+            # Train baseline agents
+            agent_a = optimizer_a.compile(agent_a, trainset=dev_labeled)
+            agent_b = optimizer_b.compile(agent_b, trainset=dev_labeled)
 
-        # Store optimization history if available
-        if hasattr(optimizer_a, 'optimization_history'):
-            results.optimization_history.extend(optimizer_a.optimization_history)
-        if hasattr(optimizer_b, 'optimization_history'):
-            results.optimization_history.extend(optimizer_b.optimization_history)
+            # Store optimization history if available
+            if hasattr(optimizer_a, 'optimization_history'):
+                results.optimization_history.extend(optimizer_a.optimization_history)
+            if hasattr(optimizer_b, 'optimization_history'):
+                results.optimization_history.extend(optimizer_b.optimization_history)
+        else:
+            logger.info(f"Resuming from round {start_round}")
 
         # Iterative co-training with advanced metrics
-        for round_num in range(1, config.rounds + 1):
+        for round_num in range(start_round, config.rounds + 1):
             logger.info(f"Starting advanced round {round_num}/{config.rounds}")
 
             # Choose metric based on alpha value with advanced scoring
@@ -405,6 +502,14 @@ def advanced_cognitive_dissonance_experiment(
                 'confidence_distribution_a': confidence_summary_a.get('confidence_distribution', {}) if sample_predictions_a else {},
                 'confidence_distribution_b': confidence_summary_b.get('confidence_distribution', {}) if sample_predictions_b else {}
             })
+
+            # Update agents in results for checkpointing
+            results.agent_a = agent_a
+            results.agent_b = agent_b
+
+            # Save checkpoint if enabled
+            if config.checkpoints:
+                results.save_checkpoint(config.checkpoints)
 
             # Log enhanced progress
             logger.info(

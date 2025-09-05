@@ -1,13 +1,16 @@
 """Tests for experiment module."""
 
 import pytest
+import os
+import tempfile
 from unittest.mock import Mock, patch, MagicMock
 import dspy
 from cognitive_dissonance.experiment import (
     ExperimentResults,
     cognitive_dissonance_experiment,
     run_ablation_study,
-    run_confidence_analysis
+    run_confidence_analysis,
+    find_latest_checkpoint
 )
 from cognitive_dissonance.config import ExperimentConfig
 
@@ -113,6 +116,133 @@ class TestExperimentResults:
         assert summary["max_accuracy_b"] == 0.8
         assert summary["max_agreement"] == 0.9
         assert summary["error_analysis"]["error_rate"] == 0.1
+    
+    def test_save_checkpoint(self):
+        """Test saving experiment checkpoint."""
+        results = ExperimentResults()
+        results.add_round(1, 0.8, 0.7, 0.9, 0.85, 0.75)
+        results.add_round(2, 0.85, 0.8, 0.95, 0.9, 0.8)
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_path = results.save_checkpoint(tmpdir)
+            
+            # Check file was created
+            assert os.path.exists(checkpoint_path)
+            assert checkpoint_path.endswith('.pkl')
+            assert 'experiment_' in os.path.basename(checkpoint_path)
+            assert 'round_2' in os.path.basename(checkpoint_path)
+    
+    def test_load_checkpoint(self):
+        """Test loading experiment checkpoint."""
+        # Create and save results
+        original_results = ExperimentResults()
+        original_results.add_round(1, 0.8, 0.7, 0.9, 0.85, 0.75)
+        original_results.add_round(2, 0.85, 0.8, 0.95, 0.9, 0.8)
+        original_results.error_analysis = {"test": "data"}
+        original_results.optimization_history = [{"step": 1, "score": 0.8}]
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_path = original_results.save_checkpoint(tmpdir)
+            
+            # Load results
+            loaded_results = ExperimentResults.load_checkpoint(checkpoint_path)
+            
+            # Verify loaded data matches original
+            assert len(loaded_results.rounds) == 2
+            assert loaded_results.rounds[0]["accuracy_a"] == 0.8
+            assert loaded_results.rounds[1]["accuracy_a"] == 0.85
+            assert loaded_results.error_analysis == {"test": "data"}
+            assert loaded_results.optimization_history == [{"step": 1, "score": 0.8}]
+    
+    def test_load_checkpoint_nonexistent(self):
+        """Test loading from nonexistent checkpoint raises error."""
+        with pytest.raises(FileNotFoundError):
+            ExperimentResults.load_checkpoint("/nonexistent/path.pkl")
+
+
+class TestFindLatestCheckpoint:
+    """Test find_latest_checkpoint utility function."""
+    
+    def test_nonexistent_directory(self):
+        """Test with nonexistent directory returns None."""
+        result = find_latest_checkpoint("/nonexistent/directory")
+        assert result is None
+    
+    def test_empty_directory(self):
+        """Test with empty directory returns None."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = find_latest_checkpoint(tmpdir)
+            assert result is None
+    
+    def test_no_checkpoint_files(self):
+        """Test with directory containing no .pkl files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create some non-checkpoint files
+            with open(os.path.join(tmpdir, "not_checkpoint.txt"), "w") as f:
+                f.write("test")
+            
+            result = find_latest_checkpoint(tmpdir)
+            assert result is None
+    
+    def test_single_checkpoint(self):
+        """Test with single checkpoint file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            checkpoint_file = os.path.join(tmpdir, "checkpoint.pkl")
+            with open(checkpoint_file, "w") as f:
+                f.write("test")
+            
+            result = find_latest_checkpoint(tmpdir)
+            assert result == checkpoint_file
+    
+    def test_multiple_checkpoints_by_timestamp(self):
+        """Test selecting latest checkpoint by modification time."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create checkpoints with different timestamps
+            old_file = os.path.join(tmpdir, "old.pkl")
+            middle_file = os.path.join(tmpdir, "middle.pkl")
+            newest_file = os.path.join(tmpdir, "newest.pkl")
+            
+            with open(old_file, "w") as f:
+                f.write("old")
+            os.utime(old_file, (1000, 1000))  # Set old timestamp
+            
+            with open(middle_file, "w") as f:
+                f.write("middle")  
+            os.utime(middle_file, (2000, 2000))  # Set middle timestamp
+            
+            with open(newest_file, "w") as f:
+                f.write("newest")
+            os.utime(newest_file, (3000, 3000))  # Set newest timestamp
+            
+            result = find_latest_checkpoint(tmpdir)
+            assert result == newest_file
+    
+    def test_touch_changes_selection(self):
+        """Test that touching a file makes it the latest."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_file = os.path.join(tmpdir, "old.pkl")
+            new_file = os.path.join(tmpdir, "new.pkl")
+            
+            # Create old file first
+            with open(old_file, "w") as f:
+                f.write("old")
+            os.utime(old_file, (1000, 1000))
+            
+            # Create new file second  
+            with open(new_file, "w") as f:
+                f.write("new")
+            os.utime(new_file, (2000, 2000))
+            
+            # New file should be selected initially
+            result = find_latest_checkpoint(tmpdir)
+            assert result == new_file
+            
+            # Touch old file to make it newest
+            os.utime(old_file, (3000, 3000))
+            
+            # Old file should now be selected
+            result = find_latest_checkpoint(tmpdir)
+            assert result == old_file
 
 
 class TestCognitiveDissonanceExperiment:

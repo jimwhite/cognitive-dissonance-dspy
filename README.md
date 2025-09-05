@@ -99,6 +99,33 @@ python examples/comprehensive_demo.py
 
 ---
 
+## Experiment Checkpointing
+
+Long-running experiments can be interrupted and resumed using the checkpointing system:
+
+```bash
+# Enable checkpointing by setting checkpoint directory
+export CHECKPOINTS=.checkpoints
+
+# Or pass via CLI
+python -m cognitive_dissonance experiment --checkpoints=.checkpoints --rounds=10
+
+# Resume from latest checkpoint (automatic if checkpoint exists)
+python -m cognitive_dissonance experiment --checkpoints=.checkpoints
+
+# Select specific checkpoint by timestamp
+touch .checkpoints/experiment_20241201_143022_round_3.pkl  # Makes this the "latest"
+```
+
+**Features:**
+- Automatic resume from latest checkpoint (by file timestamp)
+- Save after each training round
+- Complete experiment state preservation (agents, metrics, history)
+- Use `touch` to select earlier checkpoints
+- Environment variable: `CHECKPOINTS`
+
+---
+
 ## What We Can Prove
 
 **Current coverage:**

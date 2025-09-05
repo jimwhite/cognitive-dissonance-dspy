@@ -24,6 +24,7 @@ class TestExperimentConfig:
         assert config.auto_mode == "light"
         assert config.enable_disk_cache is False
         assert config.enable_memory_cache is False
+        assert config.checkpoints is None
     
     def test_from_env(self, monkeypatch):
         """Test configuration from environment variables."""
@@ -39,6 +40,7 @@ class TestExperimentConfig:
         monkeypatch.setenv("AUTO_MODE", "heavy")
         monkeypatch.setenv("ENABLE_DISK_CACHE", "true")
         monkeypatch.setenv("ENABLE_MEMORY_CACHE", "true")
+        monkeypatch.setenv("CHECKPOINTS", "/tmp/test_checkpoints")
         
         config = ExperimentConfig.from_env()
         
@@ -54,6 +56,7 @@ class TestExperimentConfig:
         assert config.auto_mode == "heavy"
         assert config.enable_disk_cache is True
         assert config.enable_memory_cache is True
+        assert config.checkpoints == "/tmp/test_checkpoints"
     
     def test_validate_valid_config(self, mock_config):
         """Test validation with valid configuration."""

@@ -252,6 +252,13 @@ def main():
         help="Advanced optimization strategy"
     )
     
+    parser.add_argument(
+        "--checkpoints",
+        type=str,
+        default=None,
+        help="Directory to save/load checkpoints (enables checkpointing)"
+    )
+    
     args = parser.parse_args()
     
     # Setup logging
@@ -275,6 +282,8 @@ def main():
         config.use_cot = True
     if args.dissonance_threshold is not None:
         config.dissonance_threshold = args.dissonance_threshold
+    if args.checkpoints:
+        config.checkpoints = args.checkpoints
     
     # Run selected command
     if args.command == "demo":

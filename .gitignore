@@ -68,3 +68,4 @@ coverage.xml
 
 .proof_cache/
 proof_learning_data.json
+.checkpoints/

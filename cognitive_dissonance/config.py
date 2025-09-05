@@ -3,6 +3,7 @@
 import os
 from dataclasses import dataclass
 import logging
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,9 @@ class ExperimentConfig:
     auto_mode: str = "light"
     enable_disk_cache: bool = False
     enable_memory_cache: bool = False
+    
+    # Checkpoint settings
+    checkpoints: Optional[str] = None
 
     @classmethod
     def from_env(cls) -> "ExperimentConfig":
@@ -45,6 +49,7 @@ class ExperimentConfig:
             auto_mode=os.getenv("AUTO_MODE", cls.auto_mode),
             enable_disk_cache=os.getenv("ENABLE_DISK_CACHE", "false").lower() == "true",
             enable_memory_cache=os.getenv("ENABLE_MEMORY_CACHE", "false").lower() == "true",
+            checkpoints=os.getenv("CHECKPOINTS", cls.checkpoints),
         )
 
     def validate(self) -> None:
