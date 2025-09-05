@@ -119,14 +119,18 @@ class TestExperimentResults:
     
     def test_save_checkpoint(self):
         """Test saving experiment checkpoint."""
-        results = ExperimentResults()
-        results.add_round(1, 0.8, 0.7, 0.9, 0.85, 0.75)
-        results.add_round(2, 0.85, 0.8, 0.95, 0.9, 0.8)
+        from cognitive_dissonance.config import ExperimentConfig
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            checkpoint_path = results.save_checkpoint(tmpdir)
+            config = ExperimentConfig(checkpoints=tmpdir)
+            results = ExperimentResults(config)
+            results.add_round(1, 0.8, 0.7, 0.9, 0.85, 0.75)
+            results.add_round(2, 0.85, 0.8, 0.95, 0.9, 0.8)
+            
+            checkpoint_path = results.save_checkpoint()
             
             # Check file was created
+            assert checkpoint_path is not None
             assert os.path.exists(checkpoint_path)
             assert checkpoint_path.endswith('.pkl')
             assert 'experiment_' in os.path.basename(checkpoint_path)
@@ -134,15 +138,18 @@ class TestExperimentResults:
     
     def test_load_checkpoint(self):
         """Test loading experiment checkpoint."""
-        # Create and save results
-        original_results = ExperimentResults()
-        original_results.add_round(1, 0.8, 0.7, 0.9, 0.85, 0.75)
-        original_results.add_round(2, 0.85, 0.8, 0.95, 0.9, 0.8)
-        original_results.error_analysis = {"test": "data"}
-        original_results.optimization_history = [{"step": 1, "score": 0.8}]
+        from cognitive_dissonance.config import ExperimentConfig
         
         with tempfile.TemporaryDirectory() as tmpdir:
-            checkpoint_path = original_results.save_checkpoint(tmpdir)
+            # Create and save results
+            config = ExperimentConfig(checkpoints=tmpdir)
+            original_results = ExperimentResults(config)
+            original_results.add_round(1, 0.8, 0.7, 0.9, 0.85, 0.75)
+            original_results.add_round(2, 0.85, 0.8, 0.95, 0.9, 0.8)
+            original_results.error_analysis = {"test": "data"}
+            original_results.optimization_history = [{"step": 1, "score": 0.8}]
+            
+            checkpoint_path = original_results.save_checkpoint()
             
             # Load results
             loaded_results = ExperimentResults.load_checkpoint(checkpoint_path)
@@ -262,7 +269,8 @@ class TestCognitiveDissonanceExperiment:
             ).with_inputs("text1", "text2")
         ]
         mock_train.return_value = [
-            dspy.Example(text1="t3", text2="t4").with_inputs("text1", "text2")
+            dspy.Example(text1="t3", text2="t4").with_inputs("text1", "text2"),
+            dspy.Example(text1="t5", text2="t6").with_inputs("text1", "text2")
         ]
         
         # Setup mock optimizer
@@ -272,6 +280,7 @@ class TestCognitiveDissonanceExperiment:
         
         # Configure for minimal rounds
         mock_config.rounds = 1
+        mock_config.checkpoints = None  # No checkpoints
         mock_config.validate = Mock()
         mock_config.setup_dspy = Mock()
         
@@ -285,6 +294,96 @@ class TestCognitiveDissonanceExperiment:
         assert len(results.rounds) == 1
         assert results.agent_a is not None
         assert results.agent_b is not None
+    
+    @patch('cognitive_dissonance.experiment.get_dev_labeled')
+    @patch('cognitive_dissonance.experiment.get_train_unlabeled')  
+    @patch('cognitive_dissonance.experiment.MIPROv2')
+    def test_experiment_with_checkpointing_enabled(self, mock_mipro, mock_train, mock_dev, mock_config):
+        """Test experiment saves checkpoints when enabled."""
+        # Setup mock data
+        mock_dev.return_value = [
+            dspy.Example(
+                text1="t1", text2="t2",
+                has_dissonance="yes", 
+                reconciled="r1"
+            ).with_inputs("text1", "text2")
+        ]
+        mock_train.return_value = [
+            dspy.Example(text1="t3", text2="t4").with_inputs("text1", "text2"),
+            dspy.Example(text1="t5", text2="t6").with_inputs("text1", "text2")
+        ]
+        
+        # Setup mock optimizer
+        mock_optimizer = Mock()
+        mock_optimizer.compile = Mock(return_value=Mock())
+        mock_mipro.return_value = mock_optimizer
+        
+        # Configure with checkpoints enabled
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_config.rounds = 2
+            mock_config.checkpoints = tmpdir
+            mock_config.validate = Mock()
+            mock_config.setup_dspy = Mock()
+            
+            # Mock ExperimentResults.save_checkpoint to track calls
+            with patch.object(ExperimentResults, 'save_checkpoint', return_value="/fake/path.pkl") as mock_save:
+                with patch('cognitive_dissonance.experiment.evaluate', return_value=0.8):
+                    with patch('cognitive_dissonance.experiment.agreement_rate', return_value=0.9):
+                        with patch('cognitive_dissonance.experiment.analyze_errors', return_value={}):
+                            results = cognitive_dissonance_experiment(mock_config)
+                
+                # Verify checkpoints were saved after each round
+                assert mock_save.call_count == 2  # Once per round
+                # New API doesn't take arguments
+                mock_save.assert_called_with()
+    
+    def test_experiment_checkpoint_resume_logic(self, mock_config):
+        """Test checkpoint resume logic without running full experiment."""
+        from cognitive_dissonance.experiment import find_latest_checkpoint
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Test 1: No checkpoint directory - should start fresh
+            mock_config.checkpoints = None
+            start_round = 1
+            skip_baseline = False
+            
+            if mock_config.checkpoints:
+                latest_checkpoint = find_latest_checkpoint(mock_config.checkpoints)
+                if latest_checkpoint:
+                    skip_baseline = True
+            
+            assert start_round == 1
+            assert skip_baseline is False
+            
+            # Test 2: Checkpoint directory exists but empty - should start fresh
+            mock_config.checkpoints = tmpdir
+            start_round = 1
+            skip_baseline = False
+            
+            if mock_config.checkpoints:
+                latest_checkpoint = find_latest_checkpoint(mock_config.checkpoints)
+                if latest_checkpoint:
+                    skip_baseline = True
+            
+            assert start_round == 1
+            assert skip_baseline is False
+            
+            # Test 3: Checkpoint exists - should resume
+            # Create a fake checkpoint file
+            checkpoint_file = os.path.join(tmpdir, "experiment_123_round_2.pkl")
+            with open(checkpoint_file, "w") as f:
+                f.write("fake checkpoint")
+            
+            if mock_config.checkpoints:
+                latest_checkpoint = find_latest_checkpoint(mock_config.checkpoints)
+                if latest_checkpoint:
+                    # In real scenario, would load results and set start_round = len(results.rounds) + 1
+                    start_round = 3  # Simulating resuming from round 2, so next is 3
+                    skip_baseline = True
+            
+            assert start_round == 3
+            assert skip_baseline is True
+            assert latest_checkpoint == checkpoint_file
     
     @patch('cognitive_dissonance.experiment.ExperimentConfig')
     def test_experiment_from_env(self, mock_config_class):
