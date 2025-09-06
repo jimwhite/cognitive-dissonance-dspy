@@ -32,6 +32,11 @@ class ExperimentConfig:
     
     # Checkpoint settings
     checkpoints: Optional[str] = None
+    
+    # MLFlow settings
+    mlflow_tracking_uri: Optional[str] = None  # MLFlow tracking server URI
+    mlflow_experiment_name: str = "cognitive-dissonance"  # MLFlow experiment name
+    enable_mlflow: bool = False  # Enable MLFlow telemetry
 
     @classmethod
     def from_env(cls) -> "ExperimentConfig":
@@ -50,6 +55,9 @@ class ExperimentConfig:
             enable_disk_cache=os.getenv("ENABLE_DISK_CACHE", "false").lower() == "true",
             enable_memory_cache=os.getenv("ENABLE_MEMORY_CACHE", "false").lower() == "true",
             checkpoints=os.getenv("CHECKPOINTS", cls.checkpoints),
+            mlflow_tracking_uri=os.getenv("MLFLOW_TRACKING_URI", cls.mlflow_tracking_uri),
+            mlflow_experiment_name=os.getenv("MLFLOW_EXPERIMENT_NAME", cls.mlflow_experiment_name),
+            enable_mlflow=os.getenv("ENABLE_MLFLOW", "false").lower() == "true",
         )
 
     def validate(self) -> None:
@@ -90,6 +98,33 @@ class ExperimentConfig:
 
         dspy.configure(lm=lm)
         logger.info(f"DSPy configured with model: {self.model}")
+
+    def setup_mlflow(self) -> None:
+        """Configure MLFlow tracking if enabled."""
+        if not self.enable_mlflow:
+            return
+            
+        try:
+            import mlflow
+            import mlflow.dspy
+            
+            # Set tracking URI if specified
+            if self.mlflow_tracking_uri:
+                mlflow.set_tracking_uri(self.mlflow_tracking_uri)
+                logger.info(f"MLFlow tracking URI set to: {self.mlflow_tracking_uri}")
+            
+            # Set experiment name
+            mlflow.set_experiment(self.mlflow_experiment_name)
+            logger.info(f"MLFlow experiment set to: {self.mlflow_experiment_name}")
+            
+            # Enable DSPy autologging
+            mlflow.dspy.autolog()
+            logger.info("MLFlow DSPy autologging enabled")
+            
+        except ImportError as e:
+            logger.warning(f"MLFlow not available, skipping telemetry setup: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to setup MLFlow: {e}")
 
 
 def setup_logging(level: str = "INFO") -> None:

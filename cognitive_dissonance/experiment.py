@@ -150,6 +150,9 @@ class ExperimentResults:
                 logger.warning(f"Failed to save agent B: {e}")
                 agent_b_path = None
         
+        # Log agents to MLFlow if enabled
+        self._log_models_to_mlflow(checkpoint_base, agent_a_path, agent_b_path)
+        
         # Save experiment state without agents (using pickle)
         temp_agent_a = self.agent_a
         temp_agent_b = self.agent_b
@@ -179,6 +182,68 @@ class ExperimentResults:
                 delattr(self, '_agent_a_path')
             if hasattr(self, '_agent_b_path'):
                 delattr(self, '_agent_b_path')
+
+    def _log_models_to_mlflow(self, checkpoint_base: str, agent_a_path: Optional[str], agent_b_path: Optional[str]) -> None:
+        """Log DSPy models to MLFlow if enabled."""
+        if not self.config or not self.config.enable_mlflow:
+            return
+            
+        try:
+            import mlflow
+            import mlflow.dspy
+            
+            # Log current metrics for this round
+            if self.rounds:
+                latest_round = self.rounds[-1]
+                mlflow.log_metrics({
+                    "accuracy_a": latest_round.get("acc_a", 0.0),
+                    "accuracy_b": latest_round.get("acc_b", 0.0),
+                    "agreement_dev": latest_round.get("agree_dev", 0.0),
+                    "agreement_train": latest_round.get("agree_train", 0.0),
+                    "reconciliation_quality": latest_round.get("reconciliation_quality", 0.0),
+                    "round": latest_round.get("round", 0),
+                }, step=len(self.rounds))
+            
+            # Log agent models if available
+            if self.agent_a and agent_a_path:
+                try:
+                    mlflow.dspy.log_model(
+                        self.agent_a,
+                        artifact_path=f"agent_a_round_{len(self.rounds)}",
+                        input_example="What is cognitive dissonance?"
+                    )
+                    logger.info(f"Logged Agent A to MLFlow: agent_a_round_{len(self.rounds)}")
+                except Exception as e:
+                    logger.warning(f"Failed to log Agent A to MLFlow: {e}")
+            
+            if self.agent_b and agent_b_path:
+                try:
+                    mlflow.dspy.log_model(
+                        self.agent_b,
+                        artifact_path=f"agent_b_round_{len(self.rounds)}",
+                        input_example="What is cognitive dissonance?"
+                    )
+                    logger.info(f"Logged Agent B to MLFlow: agent_b_round_{len(self.rounds)}")
+                except Exception as e:
+                    logger.warning(f"Failed to log Agent B to MLFlow: {e}")
+                    
+            # Log experiment parameters
+            if len(self.rounds) == 1:  # Only log once at start
+                mlflow.log_params({
+                    "model": self.config.model,
+                    "temperature": self.config.temperature,
+                    "max_tokens": self.config.max_tokens,
+                    "alpha": self.config.alpha,
+                    "rounds": self.config.rounds,
+                    "use_cot": self.config.use_cot,
+                    "dissonance_threshold": self.config.dissonance_threshold,
+                    "auto_mode": self.config.auto_mode,
+                })
+                
+        except ImportError:
+            logger.debug("MLFlow not available for model logging")
+        except Exception as e:
+            logger.warning(f"Failed to log to MLFlow: {e}")
 
     @staticmethod
     def load_checkpoint(checkpoint_path: str) -> 'ExperimentResults':
@@ -258,6 +323,7 @@ def cognitive_dissonance_experiment(
 
     config.validate()
     config.setup_dspy()
+    config.setup_mlflow()
 
     logger.info(f"Starting Cognitive Dissonance experiment with {config.rounds} rounds")
     logger.info(f"Alpha (truth anchoring): {config.alpha}")
@@ -437,6 +503,7 @@ def advanced_cognitive_dissonance_experiment(
 
     config.validate()
     config.setup_dspy()
+    config.setup_mlflow()
 
     logger.info(f"Starting ADVANCED Cognitive Dissonance experiment with {config.rounds} rounds")
     logger.info(f"Optimization strategy: {optimization_strategy}")
@@ -756,6 +823,7 @@ def run_confidence_analysis(
 
     config.validate()
     config.setup_dspy()
+    config.setup_mlflow()
 
     # Load data
     dev_labeled = get_dev_labeled()

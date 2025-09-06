@@ -259,6 +259,26 @@ def main():
         help="Directory to save/load checkpoints (enables checkpointing)"
     )
     
+    parser.add_argument(
+        "--enable-mlflow",
+        action="store_true",
+        help="Enable MLFlow telemetry and model tracking"
+    )
+    
+    parser.add_argument(
+        "--mlflow-tracking-uri",
+        type=str,
+        default="http://localhost:5000",
+        help="MLFlow tracking server URI (e.g., http://localhost:5000)"
+    )
+    
+    parser.add_argument(
+        "--mlflow-experiment-name", 
+        type=str,
+        default="cognitive-dissonance",
+        help="MLFlow experiment name"
+    )
+    
     args = parser.parse_args()
     
     # Setup logging
@@ -284,6 +304,12 @@ def main():
         config.dissonance_threshold = args.dissonance_threshold
     if args.checkpoints:
         config.checkpoints = args.checkpoints
+    if args.enable_mlflow:
+        config.enable_mlflow = True
+    if args.mlflow_tracking_uri:
+        config.mlflow_tracking_uri = args.mlflow_tracking_uri
+    if args.mlflow_experiment_name:
+        config.mlflow_experiment_name = args.mlflow_experiment_name
     
     # Run selected command
     if args.command == "demo":
