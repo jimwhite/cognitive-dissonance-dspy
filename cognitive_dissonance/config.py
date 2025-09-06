@@ -27,8 +27,8 @@ class ExperimentConfig:
 
     # Optimization settings
     auto_mode: str = "light"
-    enable_disk_cache: bool = False
-    enable_memory_cache: bool = False
+    enable_disk_cache: bool = True
+    enable_memory_cache: bool = True
     
     # Checkpoint settings
     checkpoints: Optional[str] = None

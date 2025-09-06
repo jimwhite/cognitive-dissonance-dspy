@@ -14,8 +14,11 @@ from cognitive_dissonance.config import ExperimentConfig
 def test_cli_experiment_creates_checkpoint_files():
     """Test that CLI experiment --checkpoints=.checkpoints actually creates files."""
     
-    with tempfile.TemporaryDirectory() as tmpdir:
-        checkpoint_dir = os.path.join(tmpdir, ".checkpoints")
+    # with tempfile.TemporaryDirectory() as tmpdir:
+    with open('/tmp/cp') as tmpdir:
+        # checkpoint_dir = os.path.join(tmpdir, ".checkpoints")
+        checkpoint_dir = os.path.join('/tmp/cp', ".checkpoints")
+        os.makedirs(checkpoint_dir, exist_ok=True)
         
         # Mock sys.argv to simulate the exact CLI command user ran
         original_argv = sys.argv

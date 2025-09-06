@@ -126,35 +126,59 @@ class ExperimentResults:
         
         # Create filename with timestamp
         experiment_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        checkpoint_file = f"experiment_{experiment_id}_round_{len(self.rounds)}.pkl"
-        checkpoint_path = os.path.join(checkpoint_dir, checkpoint_file)
+        checkpoint_base = f"experiment_{experiment_id}_round_{len(self.rounds)}"
         
-        # Save the complete experiment state
-        # Temporarily remove agents to avoid pickling issues with mocks during testing
+        # Save agents separately using DSPy's save method
+        agent_a_path = None
+        agent_b_path = None
+        
+        if self.agent_a is not None:
+            try:
+                agent_a_path = os.path.join(checkpoint_dir, f"{checkpoint_base}_agent_a.json")
+                self.agent_a.save(agent_a_path)
+                logger.info(f"Saved agent A to {agent_a_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save agent A: {e}")
+                agent_a_path = None
+        
+        if self.agent_b is not None:
+            try:
+                agent_b_path = os.path.join(checkpoint_dir, f"{checkpoint_base}_agent_b.json")
+                self.agent_b.save(agent_b_path)
+                logger.info(f"Saved agent B to {agent_b_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save agent B: {e}")
+                agent_b_path = None
+        
+        # Save experiment state without agents (using pickle)
         temp_agent_a = self.agent_a
         temp_agent_b = self.agent_b
+        checkpoint_path = os.path.join(checkpoint_dir, f"{checkpoint_base}.pkl")
+        
         try:
-            with open(checkpoint_path, 'wb') as f:
-                pickle.dump(self, f)
-        except Exception as e:
-            # If pickling fails, try without agents (they might be mocks in tests)
-            logger.warning(f"Failed to pickle with agents: {e}. Attempting to save without agents.")
+            # Temporarily remove agents and add paths instead
             self.agent_a = None
             self.agent_b = None
-            try:
-                with open(checkpoint_path, 'wb') as f:
-                    pickle.dump(self, f)
-                logger.info(f"Checkpoint saved without agents to {checkpoint_path}")
-            except Exception as e2:
-                logger.error(f"Failed to save checkpoint even without agents: {e2}")
-                raise e2
-            finally:
-                # Restore agents
-                self.agent_a = temp_agent_a
-                self.agent_b = temp_agent_b
-        
-        logger.info(f"Checkpoint saved to {checkpoint_path}")
-        return checkpoint_path
+            self._agent_a_path = agent_a_path
+            self._agent_b_path = agent_b_path
+            
+            with open(checkpoint_path, 'wb') as f:
+                pickle.dump(self, f)
+            
+            logger.info(f"Checkpoint saved to {checkpoint_path}")
+            return checkpoint_path
+            
+        except Exception as e:
+            logger.error(f"Failed to save checkpoint: {e}")
+            raise e
+        finally:
+            # Restore agents and remove temp paths
+            self.agent_a = temp_agent_a  
+            self.agent_b = temp_agent_b
+            if hasattr(self, '_agent_a_path'):
+                delattr(self, '_agent_a_path')
+            if hasattr(self, '_agent_b_path'):
+                delattr(self, '_agent_b_path')
 
     @staticmethod
     def load_checkpoint(checkpoint_path: str) -> 'ExperimentResults':
@@ -162,10 +186,43 @@ class ExperimentResults:
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
         
+        # Load the main experiment state
         with open(checkpoint_path, 'rb') as f:
             results = pickle.load(f)
         
         logger.info(f"Loaded checkpoint from {checkpoint_path}, resuming from round {len(results.rounds)}")
+        
+        # Restore agents if paths were saved
+        if hasattr(results, '_agent_a_path') and results._agent_a_path:
+            if os.path.exists(results._agent_a_path):
+                try:
+                    from .verifier import CognitiveDissonanceResolver
+                    results.agent_a = CognitiveDissonanceResolver()
+                    results.agent_a.load(results._agent_a_path)
+                    logger.info(f"Restored agent A from {results._agent_a_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to load agent A: {e}")
+                    results.agent_a = None
+            else:
+                logger.warning(f"Agent A file not found: {results._agent_a_path}")
+                results.agent_a = None
+            delattr(results, '_agent_a_path')
+        
+        if hasattr(results, '_agent_b_path') and results._agent_b_path:
+            if os.path.exists(results._agent_b_path):
+                try:
+                    from .verifier import CognitiveDissonanceResolver
+                    results.agent_b = CognitiveDissonanceResolver()
+                    results.agent_b.load(results._agent_b_path)
+                    logger.info(f"Restored agent B from {results._agent_b_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to load agent B: {e}")
+                    results.agent_b = None
+            else:
+                logger.warning(f"Agent B file not found: {results._agent_b_path}")
+                results.agent_b = None
+            delattr(results, '_agent_b_path')
+        
         return results
 
 
@@ -229,15 +286,25 @@ def cognitive_dissonance_experiment(
             results = ExperimentResults.load_checkpoint(latest_checkpoint)
             results.config = config  # Ensure loaded results has current config
             start_round = len(results.rounds) + 1
-            agent_a, agent_b = results.agent_a, results.agent_b
-            skip_baseline = True
+            
+            # Check if agents were successfully loaded from checkpoint
+            if results.agent_a is not None and results.agent_b is not None:
+                agent_a, agent_b = results.agent_a, results.agent_b
+                skip_baseline = True
+                logger.info(f"Restored agents from checkpoint")
+            else:
+                # Agents weren't saved/loaded properly, need to retrain baseline
+                logger.warning("Agents not found in checkpoint, will retrain baseline agents")
+                skip_baseline = False
         else:
             logger.info(f"No existing checkpoint found in {config.checkpoints}, starting fresh")
             results = ExperimentResults(config)
+            skip_baseline = False
     else:
         results = ExperimentResults(config)
+        skip_baseline = False
 
-    # Initialize agents if not resuming
+    # Initialize agents if not resuming or agents weren't loaded
     if not skip_baseline:
         agent_a = CognitiveDissonanceResolver(use_cot=config.use_cot)
         agent_b = CognitiveDissonanceResolver(use_cot=config.use_cot)
@@ -398,15 +465,25 @@ def advanced_cognitive_dissonance_experiment(
             results = ExperimentResults.load_checkpoint(latest_checkpoint)
             results.config = config  # Ensure loaded results has current config
             start_round = len(results.rounds) + 1
-            agent_a, agent_b = results.agent_a, results.agent_b
-            skip_baseline = True
+            
+            # Check if agents were successfully loaded from checkpoint
+            if results.agent_a is not None and results.agent_b is not None:
+                agent_a, agent_b = results.agent_a, results.agent_b
+                skip_baseline = True
+                logger.info(f"Restored agents from checkpoint")
+            else:
+                # Agents weren't saved/loaded properly, need to retrain baseline
+                logger.warning("Agents not found in checkpoint, will retrain baseline agents")
+                skip_baseline = False
         else:
             logger.info(f"No existing checkpoint found in {config.checkpoints}, starting fresh")
             results = ExperimentResults(config)
+            skip_baseline = False
     else:
         results = ExperimentResults(config)
+        skip_baseline = False
 
-    # Initialize agents and components if not resuming
+    # Initialize agents and components if not resuming or agents weren't loaded
     if not skip_baseline:
         agent_a = CognitiveDissonanceResolver(use_cot=config.use_cot)
         agent_b = CognitiveDissonanceResolver(use_cot=config.use_cot)
