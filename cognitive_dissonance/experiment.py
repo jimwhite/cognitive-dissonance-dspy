@@ -24,6 +24,31 @@ from .uncertainty import UncertaintyQuantifier, EnhancedConfidenceScorer
 logger = logging.getLogger(__name__)
 
 
+def _with_mlflow_run(config: ExperimentConfig, experiment_func, *args, **kwargs):
+    """Wrapper to run experiment function within MLFlow run context if enabled."""
+    if config.enable_mlflow:
+        try:
+            import mlflow
+            import mlflow.dspy
+            
+            # Start the experiment run
+            with mlflow.start_run():
+                # Enable autologging for DSPy training
+                mlflow.dspy.autolog()
+                logger.info("Started MLFlow run with DSPy autologging enabled")
+                
+                return experiment_func(*args, **kwargs)
+                
+        except ImportError:
+            logger.warning("MLFlow not available, running without telemetry")
+            return experiment_func(*args, **kwargs)
+        except Exception as e:
+            logger.warning(f"MLFlow setup failed: {e}, running without telemetry")
+            return experiment_func(*args, **kwargs)
+    else:
+        return experiment_func(*args, **kwargs)
+
+
 def find_latest_checkpoint(checkpoint_dir: str) -> Optional[str]:
     """Find checkpoint with most recent modification time."""
     if not os.path.exists(checkpoint_dir):
@@ -324,7 +349,13 @@ def cognitive_dissonance_experiment(
     config.validate()
     config.setup_dspy()
     config.setup_mlflow()
+    
+    # Run with MLFlow if enabled
+    return _with_mlflow_run(config, _cognitive_dissonance_experiment_impl, config)
 
+
+def _cognitive_dissonance_experiment_impl(config: ExperimentConfig) -> ExperimentResults:
+    """Implementation of the Cognitive Dissonance experiment."""
     logger.info(f"Starting Cognitive Dissonance experiment with {config.rounds} rounds")
     logger.info(f"Alpha (truth anchoring): {config.alpha}")
     logger.info(f"Chain of Thought: {config.use_cot}")
@@ -504,7 +535,13 @@ def advanced_cognitive_dissonance_experiment(
     config.validate()
     config.setup_dspy()
     config.setup_mlflow()
+    
+    # Run with MLFlow if enabled
+    return _with_mlflow_run(config, _advanced_cognitive_dissonance_experiment_impl, config, optimization_strategy)
 
+
+def _advanced_cognitive_dissonance_experiment_impl(config: ExperimentConfig, optimization_strategy: str) -> ExperimentResults:
+    """Implementation of the advanced Cognitive Dissonance experiment."""
     logger.info(f"Starting ADVANCED Cognitive Dissonance experiment with {config.rounds} rounds")
     logger.info(f"Optimization strategy: {optimization_strategy}")
     logger.info(f"Alpha (truth anchoring): {config.alpha}")
@@ -824,7 +861,13 @@ def run_confidence_analysis(
     config.validate()
     config.setup_dspy()
     config.setup_mlflow()
+    
+    # Run with MLFlow if enabled
+    return _with_mlflow_run(config, _run_confidence_analysis_impl, config)
 
+
+def _run_confidence_analysis_impl(config: ExperimentConfig) -> Dict[str, Any]:
+    """Implementation of confidence analysis."""
     # Load data
     dev_labeled = get_dev_labeled()
 
